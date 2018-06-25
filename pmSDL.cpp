@@ -262,6 +262,7 @@ std::string projectMSDL::getActivePresetName()
 
 
 #define IMAGE_SIZE 24
+#define IMAGE_SCALE ((float)IMAGE_SIZE)
 #define OB_LEFT 0
 #define OB_RIGHT (IMAGE_SIZE-1)
 #define IB_LEFT 1
@@ -324,50 +325,6 @@ public:
     virtual float next(float time) const = 0;
 };
 
-class SimpleGenerator : public Generator
-{
-    float offset, scale, speed, r;
-public:
-    SimpleGenerator() : offset(0.5), scale(0.5), speed(1.0) {}
-    SimpleGenerator(float _min, float _max, float _time)
-    {
-        offset = (_max + _min) / 2.0;
-        scale = fabs(_max - _min) / 2.0;
-        speed = 2*M_PI / _time;
-    }
-    SimpleGenerator(const SimpleGenerator &src)
-    {
-        offset = src.offset;
-        scale = src.scale;
-        speed = src.speed;
-    }
-    void copy(const SimpleGenerator &src)
-    {
-        offset = src.offset;
-        scale = src.scale;
-        speed = src.speed;
-    }
-    float next(float t) const
-    {
-        return offset + scale * sin(t*speed);
-    }
-};
-class Spirograph : public Generator
-{
-public:
-    SimpleGenerator a;
-    SimpleGenerator b;
-    Spirograph() : a(), b() {}
-    Spirograph(const SimpleGenerator &_a, const SimpleGenerator &_b) : a(_a), b(_b)
-    {
-    }
-
-    float next(float t) const
-    {
-        return a.next(t) + b.next(t);
-    }
-};
-
 
 void rgb2hsl(float *rgb, float *hsl)
 {
@@ -420,14 +377,12 @@ union Color
     Color() : arr {0,0,0,1} {}
     Color(float r, float g, float b) : arr {r,g,b,1}
     {
-        constrain();
     }
     Color(float r, float g, float b, float a) : arr {r,g,b,a}
     {
-        constrain();
     }
-    Color(float t, Generator &a, Generator &b, Generator &c) :
-        arr {a.next(t), b.next(t), c.next(t), 1.0} {}
+    // Color(float t, Generator &a, Generator &b, Generator &c) :
+    //     arr {a.next(t), b.next(t), c.next(t), 1.0} {}
     Color(const Color &a, const Color &b, float ratio)
     {
         rgba.r = IN(a.rgba.r,b.rgba.r,ratio);
@@ -455,6 +410,11 @@ union Color
         rgba.r = ::constrain(rgba.r);
         rgba.g = ::constrain(rgba.g);
         rgba.b = ::constrain(rgba.b);
+    }
+    void constrain2()
+    {
+        if (rgba.r > 1.0 || rgba.b > 1.0 || rgba.g > 1.0)
+            saturate(1.0);
     }
     Color &complement()
     {
@@ -513,21 +473,85 @@ Color operator -(const Color &a, const Color &b)
     return ret;
 }
 
+
+class SimpleGenerator : public Generator
+{
+    float offset, scale, speed, r;
+public:
+    SimpleGenerator() : offset(0.5), scale(0.5), speed(1.0) {}
+    SimpleGenerator(float _min, float _max, float _time)
+    {
+        offset = (_max + _min) / 2.0;
+        scale = fabs(_max - _min) / 2.0;
+        speed = 2*M_PI / _time;
+    }
+    SimpleGenerator(const SimpleGenerator &src)
+    {
+        offset = src.offset;
+        scale = src.scale;
+        speed = src.speed;
+    }
+    void copy(const SimpleGenerator &src)
+    {
+        offset = src.offset;
+        scale = src.scale;
+        speed = src.speed;
+    }
+    float next(float t) const
+    {
+        return offset + scale * sin(t*speed);
+    }
+};
+class Spirograph : public Generator
+{
+public:
+    SimpleGenerator a;
+    SimpleGenerator b;
+    Spirograph() : a(), b() {}
+    Spirograph(const SimpleGenerator &_a, const SimpleGenerator &_b) : a(_a), b(_b)
+    {
+    }
+
+    float next(float t) const
+    {
+        return a.next(t) + b.next(t);
+    }
+};
+class ColorGenerator
+{
+    Generator *r, *g, *b;
+public:
+     ColorGenerator(Generator *_r, Generator *_g, Generator *_b) :
+        r(_r), g(_g), b(_b)
+    {
+    }
+
+    Color next(float t) const
+    {
+        Color c(r->next(t), g->next(t), b->next(t));
+        c.constrain2();
+        return c;
+    }
+};
+
+
+
 class PointContext
 {
 public:
-    // in
+    // per_point in
     float rad;  // distance from center
-    // in/out
+    // per_point in/out 
     float sx;
     float cx;
-    float gamma;
+    float dx;
+    // sx and cx are converted to dx in after_per_point()
 };
 
 class PatternContext
 {
 public:
-    PatternContext() : decay(1.0), cx(0.5), sx(1.0), saturate(0), gamma(2.8),
+    PatternContext() : decay(1.0), cx(0.5), sx(1.0), dx(0.0), saturate(0), gamma(2.8),
         ob_size(0), ib_size(0),
         time(0), frame(0)
     {
@@ -539,6 +563,9 @@ public:
     float decay;
     float cx;       // center
     float sx;       // stretch
+    float dx;       // slide
+    bool  dx_wrap;  // rotate?
+
     unsigned ob_size;  // left border
     Color ob_right;
     Color ob_left;
@@ -557,7 +584,7 @@ public:
     float bass;
     float mid;
     float treb;
-    float vol_att;
+    //float vol_att;
     float bass_att;
     float mid_att;
     float treb_att;
@@ -800,10 +827,9 @@ public:
     {
         int i=(int)floor(f);
         f = f - i;
+        i = i % IMAGE_SIZE;
         if (i < 0)
             i += IMAGE_SIZE;
-        if (i >= IMAGE_SIZE)
-            i = i - IMAGE_SIZE;
         int j = (i+1) % IMAGE_SIZE;
         Color c(map[i], map[j], f);
         return c;
@@ -886,23 +912,12 @@ public:
         }
     }
 
-    void stretch(PatternContext &ctx)
-    {
-        Image cp(*this);
-        for (int i=LEFTMOST_PIXEL ; i<=RIGHTMOST_PIXEL ; i++)
-        {
-            float center = IN(LEFTMOST_PIXEL, RIGHTMOST_PIXEL, ctx.points[i].cx);
-            float from = (i-center)/ctx.points[i].sx + center;
-            setRGB(i, cp.getRGB(from));
-        }
-    }
-
     void move(float dx)
     {
         Image cp(*this);
         for (int i=LEFTMOST_PIXEL ; i<=RIGHTMOST_PIXEL ; i++)
         {
-            float from = i + dx*IMAGE_SIZE;
+            float from = i + dx*IMAGE_SCALE;
             setRGB(i, cp.getRGB(from));
         }
     }
@@ -912,17 +927,17 @@ public:
         Image cp(*this);
         for (int i=LEFTMOST_PIXEL ; i<=RIGHTMOST_PIXEL ; i++)
         {
-            float from = i + dx*IMAGE_SIZE;
+            float from = i + dx*IMAGE_SCALE;
             setRGB(i, cp.getRGB_wrap( from ));
         }
     }
 
     void decay(float d)
     {
+        // scale d a little
+        d = (d-1.0) * 0.5 + 1.0;
         for (int i=LEFTMOST_PIXEL ; i<=RIGHTMOST_PIXEL ; i++)
-        {
             map[i] *= d;
-        }
     }
 };
 #endif
@@ -930,6 +945,7 @@ public:
 class Pattern
 {
 public:
+    virtual std::string name() const = 0;
     virtual void setup(PatternContext &ctx) = 0;
 
     // frame methods
@@ -1003,6 +1019,7 @@ void projectMSDL::renderFrame()
         if (p == currentPattern && patterns.size() > 1)
             p = patterns.at(rand() % patterns.size());
         currentPattern = p;
+        fprintf(stderr, "%s\n", currentPattern->name().c_str());
         currentPattern->setup(context);
         timeKeeper->StartPreset();
     }
@@ -1018,8 +1035,8 @@ void projectMSDL::renderFrame()
     frame.bass_att = beatDetect->bass_att;
     frame.mid_att = beatDetect->mid_att;
     frame.treb_att = beatDetect->treb_att;
-    frame.vol = (beatDetect->bass + beatDetect->mid + beatDetect->treb) / 3.0;
-    frame.vol_att = (beatDetect->bass_att + beatDetect->mid_att + beatDetect->treb_att) / 3.0;
+    frame.vol = beatDetect->vol; // (beatDetect->bass + beatDetect->mid + beatDetect->treb) / 3.0;
+    //frame.vol_att = beatDetect->vol_attr; // (beatDetect->bass_att + beatDetect->mid_att + beatDetect->treb_att) / 3.0;
 
     pattern->per_frame(frame);
     for (int i=0 ; i<IMAGE_SIZE ; i++)
@@ -1028,12 +1045,19 @@ void projectMSDL::renderFrame()
         pt.rad = ((double)i)/(IMAGE_SIZE-1) - 0.5;
         pt.sx = frame.sx;
         pt.cx = frame.cx;
-        pt.gamma = frame.gamma;
+        pt.dx = frame.dx;
     }
     for (int i=0 ; i<IMAGE_SIZE ; i++)
     {
         pattern->per_point(frame, frame.points[i]);
     }
+    // convert sx,cx to dx
+    for (int i=LEFTMOST_PIXEL ; i<=RIGHTMOST_PIXEL ; i++)
+    {
+        float center = IN(-0.5, 0.5, frame.points[i].cx);
+        frame.points[i].dx += (frame.points[i].rad-center) * (frame.points[i].sx-1.0);
+    }
+
     pattern->update(frame, work);
     pattern->draw(frame,work);
     stash.copyFrom(work);
@@ -1045,7 +1069,6 @@ void projectMSDL::renderFrame()
 
 
 
-
 /****************************
  * PATTERNS *****************
  ***************************/
@@ -1053,7 +1076,16 @@ void projectMSDL::renderFrame()
 
 class AbstractPattern : public Pattern
 {
+protected:
+    std::string pattern_name;
+
+    AbstractPattern(std::string _name) : pattern_name(_name)
+    {}
 public:
+    std::string name() const
+    {
+        return pattern_name;
+    }
     void per_Frame(PatternContext &ctx)
     {
     }
@@ -1064,7 +1096,15 @@ public:
 
     void update(PatternContext &ctx, Image &image)
     {
-        image.stretch(ctx);
+        Image cp(image);
+        for (int i=LEFTMOST_PIXEL ; i<=RIGHTMOST_PIXEL ; i++)
+        {
+            float from = i - IMAGE_SCALE * ctx.points[i].dx;
+            if (ctx.dx_wrap)
+                image.setRGB(i, cp.getRGB_wrap(from));
+            else
+                image.setRGB(i, cp.getRGB(from));
+        }
         image.decay(ctx.decay);
     }
 
@@ -1089,41 +1129,44 @@ public:
 };
 
 
-class ColorSweep : public AbstractPattern
+class Waterfall : public AbstractPattern
 {
-    SimpleGenerator lb_r;
-    SimpleGenerator lb_g;
-    SimpleGenerator lb_b;
-    SimpleGenerator rb_r;
-    SimpleGenerator rb_g;
-    SimpleGenerator rb_b;
+    ColorGenerator *lb_color;
+    ColorGenerator *rb_color;
     SimpleGenerator cx;
+    bool option;
 public:
-    ColorSweep() : AbstractPattern(),
-        lb_r(0.2, 0.8, 5.5),
-        lb_g(0.2, 0.8, 6.5),
-        lb_b(0.2, 0.8, 7.5),
-        rb_r(0.2, 0.8, 8),
-        rb_g(0.2, 0.8, 7),
-        rb_b(0.2, 0.8, 6),
+    Waterfall() : AbstractPattern((const char *)"waterfall"),
         cx(0.1, 0.9, 9)
-    {}
+    {
+        lb_color = new ColorGenerator(
+            new SimpleGenerator(0.2, 0.8, 5.5),
+            new SimpleGenerator(0.2, 0.8, 6.5),
+            new SimpleGenerator(0.2, 0.8, 7.5)
+        );
+        rb_color = new ColorGenerator(
+            new SimpleGenerator(0.2, 0.8, 8),
+            new SimpleGenerator(0.2, 0.8, 7),
+            new SimpleGenerator(0.2, 0.8, 6)
+        );
+    }
 
     void setup(PatternContext &ctx)
     {
         ctx.sx = 0.9;
         ctx.ob_size = 1;
-        ctx.ib_size = random() % 2;
+        option = random() % 2;
+        ctx.ib_size = option;       
     }
 
     void per_frame(PatternContext &ctx)
     {
-        ctx.ob_left = Color( ctx.time, lb_r, lb_g, lb_b );
+        ctx.ob_left = lb_color->next( ctx.time ); //Color( ctx.time, lb_r, lb_g, lb_b );
         ctx.ob_left *= 0.5 + ctx.treb / 2.0;
         ctx.ib_left = ctx.ob_left;
         ctx.ib_left.complement();
 
-        ctx.ob_right = Color( ctx.time, rb_r, rb_g, rb_b );
+        ctx.ob_right = rb_color->next( ctx.time ); //Color( ctx.time, rb_r, rb_g, rb_b );
         ctx.ob_right *= 0.5+(ctx.bass/2.0);
         ctx.ib_right = ctx.ob_right;
         ctx.ib_right.complement();
@@ -1137,6 +1180,9 @@ class GreenEnvy : public AbstractPattern
 {
     bool rotate_effect;
 public:
+    GreenEnvy() : AbstractPattern((const char *)"green envy")
+    {}
+
     void setup(PatternContext &ctx)
     {
         ctx.sx = 1.05;
@@ -1152,11 +1198,12 @@ public:
         //Color c(ctx.treb+ctx.mid,ctx.mid,0); // yellow and red
         //Color c(ctx.treb,ctx.treb,ctx.mid); // yellow and blue
         Color c(ctx.treb,ctx.mid,ctx.treb); // green and purple
+        c.constrain2();
         //Color c(ctx.treb,ctx.mid,ctx.bass);
-        int v = ctx.vol;// / MAX(1,ctx.vol_att);
+        //int v = ctx.vol;// / MAX(1,ctx.vol_att);
         //int bass = ctx.bass; // MAX(ctx.bass_att, ctx.bass);
         int bass = MAX(ctx.bass_att, ctx.bass);
-        int w = MIN(8,(int)round(bass*3));
+        int w = MIN(IMAGE_SIZE*2/3,(int)round(bass*3));
         image.setRGB(11-w,c);
         image.setRGB(12+w,c);
         for (int i=11-w+1 ; i<=12+w-1 ; i++)
@@ -1172,18 +1219,22 @@ public:
 
 class Fractal : public AbstractPattern
 {
-    SimpleGenerator r;
-    SimpleGenerator g;
-    SimpleGenerator b;
+    ColorGenerator *color;
+    // SimpleGenerator r;
+    // SimpleGenerator g;
+    // SimpleGenerator b;
     Spirograph x;
     float vtime;
     bool option;
 public:
-    Fractal() :
-        r(0.2, 0.8, 0.5*5.5),
-        g(0.2, 0.8, 0.5*6.5),
-        b(0.2, 0.8, 0.5*7.5), x()
+    Fractal() : AbstractPattern("fractal"), x()
     {
+        color = new ColorGenerator(
+            new SimpleGenerator(0.2, 0.8, 0.5*5.5),
+            new SimpleGenerator(0.2, 0.8, 0.5*6.5),
+            new SimpleGenerator(0.2, 0.8, 0.5*7.5)
+        );
+
         SimpleGenerator a(6, IMAGE_SIZE-1-6, 13);
         SimpleGenerator b(-2, 2, 5);
         x.a = a; x.b = b;
@@ -1193,7 +1244,7 @@ public:
     {
         option = random() % 2;
         vtime = ctx.time;
-        ctx.decay = 0.7;
+        ctx.decay = 0.5;
         if (option)
             ctx.decay += 0.1;
         ctx.sx = 0.5;
@@ -1237,7 +1288,7 @@ public:
     }
     void draw(PatternContext &ctx, Image &image)
     {
-        Color color1(ctx.time,r,g,b);
+        Color color1 = color->next(ctx.time);
         // Color hsl(fmod(ctx.time/3,1.0),1.0,0.5);
         // Color color2;
         // hsl2rgb(hsl.arr,color2.arr);
@@ -1254,15 +1305,6 @@ public:
 
     void effects(PatternContext &ctx, Image &image)
     {
-        // if (option)
-        // {
-        //     for (int i=0 ; i<IMAGE_SIZE ; i++)
-        //     {
-        //         Color c = Color(1,1,1) - image.getRGB(i);
-        //         c.saturate(1.0);
-        //         image.setRGB(i, c);
-        //     }
-        // }
     }
 };
 
@@ -1270,90 +1312,124 @@ public:
 class Diffusion : public AbstractPattern
 {
 public:
-    /*
-    per_frame_2=bass_effect = min(max(max(bass,bass_att)-1.3,0),1);
-per_frame_3=treb_effect = min(max(max(treb,treb_att)-1.3,0),1);
-per_frame_4=mid_effect = min(max(max(mid,mid_att)-1.3,0),1);
-per_frame_5=wave_r = wave_r + 0.4*( 0.6*sin(1.517*time) + 0.4*mid_effect );
-per_frame_6=wave_b = wave_b + 0.4*( 0.6*sin(1.088*time) + 0.4*bass_effect );
-per_frame_7=wave_g = wave_g + 0.4*( 0.6*sin(1.037*time) + 0.4*treb_effect );
-*/
-    SimpleGenerator r, g, b;
-    bool option;
+    ColorGenerator *color;
+    float scale;
+    float amplitude;
 
-    Diffusion() :
-         r(0.0, 0.7, 2*M_PI/1.517),
-         g(0.0, 0.7, 2*M_PI/1.088),
-         b(0.0, 0.7, 2*M_PI/1.037)
-    {}
+    bool option;
+    bool option_set;
+
+    Diffusion() : AbstractPattern("diffusion"), option_set(0)
+    {
+        color = new ColorGenerator(
+            new SimpleGenerator(0.1, 0.7, 2*M_PI/1.517),
+            new SimpleGenerator(0.1, 0.7, 2*M_PI/1.088),
+            new SimpleGenerator(0.1, 0.7, 2*M_PI/1.037)
+        );
+    }
+
+    Diffusion(bool _option) : Diffusion()
+    {
+        option = _option;
+        option_set = 1;
+    }
 
     void setup(PatternContext &ctx)
     {
-        option = random() % 2;
+        if (!option_set)
+            option = random() % 2;
         ctx.decay = 1.0;
-        ctx.sx = 1.05;
+        ctx.sx = 1.03;
+        ctx.dx_wrap = 1;
     }
 
     void per_frame(PatternContext &ctx)
     {
-
+        scale = (1.2 + 2*ctx.bass) * 2*M_PI;  // waviness
+        if (option)
+            amplitude = 0.2 * ctx.treb_att * sin(ctx.time*1.5); // speed and dir
+        else
+            amplitude = 0.2 * ctx.treb_att;
     }
 
     void per_point(PatternContext &ctx, PointContext &pt)
     {
-        float x = 4 * M_PI * pt.rad;
-        pt.sx = pt.sx + 0.1 * ctx.bass_att * sin(x) * sin(ctx.time);;
+        float x = scale * pt.rad;
+        float wave_time = 0.0;
+//        pt.sx = pt.sx + sin(x + wave_time*ctx.time) * amplitude;
+        pt.sx = pt.sx + sin(fabs(x) + wave_time*ctx.time) * amplitude;
+        // pt.sx = pt.sx + sin(x + wave_time*ctx.time) * amplitude;
     }
 
     void draw(PatternContext &ctx, Image &image)
     {
         float bass = constrain(MAX(ctx.bass,ctx.bass_att)-1.3);
-        float mid = constrain(MAX(ctx.bass,ctx.bass_att)-1.3);
+        float mid = constrain(MAX(ctx.mid,ctx.mid_att)-1.3);
         float treb = constrain(MAX(ctx.treb,ctx.treb_att)-1.3);
-        Color c(ctx.time, r, g, b);
-        Color c1 = c + Color(mid,bass,treb) * 0.4;
-        image.setRGB(IMAGE_SIZE/2-1, c1);
+        Color c = color->next( ctx.time * 2 );
+        Color c1, c2;
+
+        c1 = c + Color(mid,bass,treb) * 0.4;
+        c2 = c1;
         if (option)
-            c1 = c.complement() + Color(mid,bass,treb) * 0.4;
-        image.setRGB(IMAGE_SIZE/2, c1);
+            c2.complement(); //c.complement() + Color(mid,bass,treb) * 0.4;
+
+        // c1 = c;
+        // c1.saturate(1.0);
+        // c2 = c1;
+        // if (option)
+        //     c2 = c1.complement();
+
+        image.setRGB(IMAGE_SIZE/2-1, c1);
+        image.setRGB(IMAGE_SIZE/2, c2);
+    }
+
+    void effects(PatternContext &ctx, Image &image)
+    {
+        if (option)
+            image.rotate(0.5);
     }
 };
 
 
-
 class Equalizer : public AbstractPattern
 {
-    int posT, posB;
-public:
-    /*
-    per_frame_2=bass_effect = min(max(max(bass,bass_att)-1.3,0),1);
-per_frame_3=treb_effect = min(max(max(treb,treb_att)-1.3,0),1);
-per_frame_4=mid_effect = min(max(max(mid,mid_att)-1.3,0),1);
-per_frame_5=wave_r = wave_r + 0.4*( 0.6*sin(1.517*time) + 0.4*mid_effect );
-per_frame_6=wave_b = wave_b + 0.4*( 0.6*sin(1.088*time) + 0.4*bass_effect );
-per_frame_7=wave_g = wave_g + 0.4*( 0.6*sin(1.037*time) + 0.4*treb_effect );
-*/
-    // SimpleGenerator r, g, b;
+    bool option;
 
-    Equalizer()
-    // :    r(-0.2, 0.8, 2*M_PI/1.517),
-    //      g(-0.2, 0.8, 2*M_PI/1.088),
-    //      b(-0.2, 0.8, 2*M_PI/1.037)
+    int posT, posB;
+    Color c1, c2, cmix;
+public:
+
+    Equalizer() : AbstractPattern("equalizer")
     {}
 
     void setup(PatternContext &ctx)
     {
-        ctx.decay = 0.92;
+        ctx.decay = 0.85;
         ctx.sx = 0.90;
+        option = random() % 2;
+
+        if (option)
+        {
+            c1 = Color(1,0,0);
+            c2 = Color(0,1,0);
+            cmix = Color(c1, c2, 0.5);
+        }
+        else
+        {
+            c1 = Color(0,0,1);
+            c2 = Color(1,1,0);
+            cmix = Color(0,1,0);
+        }
     }
 
     void per_frame(PatternContext &ctx)
     {
-        posB = MAX(ctx.bass,ctx.bass_att) * 12;
+        posB = MAX(ctx.bass,ctx.bass_att) * (IMAGE_SCALE/2);
         if (posB > IMAGE_SIZE-1)
             posB = IMAGE_SIZE-1;
 
-        posT = MAX(ctx.treb,ctx.treb_att) * 12;
+        posT = MAX(ctx.treb,ctx.treb_att) * (IMAGE_SCALE/2);
         if (posT > IMAGE_SIZE-1)
             posT = IMAGE_SIZE-1;
         posT = IMAGE_SIZE-1 - posT;
@@ -1372,8 +1448,6 @@ per_frame_7=wave_g = wave_g + 0.4*( 0.6*sin(1.037*time) + 0.4*treb_effect );
 
     void update(PatternContext &ctx, Image &image)
     {
-        //image.setAll(Color(0,0,0));
-
         Image cp(image);
         for (int i=0 ; i<IMAGE_SIZE ; i++)
         {
@@ -1384,74 +1458,112 @@ per_frame_7=wave_g = wave_g + 0.4*( 0.6*sin(1.037*time) + 0.4*treb_effect );
             image.setRGB(i,blur);
         }
         image.decay(ctx.decay);
-        // Image left(image);
-        // ctx.cx = 0;
-        // left.stretch(ctx);
-
-        // Image right(image);
-        // ctx.cx = 1.0;
-        // right.stretch(ctx);
-
-        // for (int i=0 ; i<IMAGE_SIZE-1 ; i++)
-        //     image.setRGB(i, Color(left.getRGB(i),right.getRGB(i), 0.5));
-        // image.decay(ctx.decay);
     }
 
 
     void draw(PatternContext &ctx, Image &image)
-    {/*
+    {
         Color white(0.5,0.5,0.5);
-        int posB = MAX(ctx.bass,ctx.bass_att) * 5;
-        if (posB > IMAGE_SIZE-1)
-            posB = IMAGE_SIZE-1;
-        for (int i=0 ; i<posB ; i++)
-            image.setRGB(i, white);
-        image.setRGB(posB, 1.0,0,0);
-
-        int posT = MAX(ctx.treb,ctx.treb_att) * 6;
-        if (posT > IMAGE_SIZE-1)
-            posT = IMAGE_SIZE-1;
-        posT = IMAGE_SIZE-1 - posT;
-        for (int i=posT+1 ; i<IMAGE_SIZE ; i++)
-        {
-            if (i<=posB)
-                image.addRGB(i, white);
-            else
-                image.setRGB(i, white);
-        }
-            if (posT<=posB)
-                image.addRGB(posT, Color(0,1.0,0));
-            else
-                image.setRGB(posT, Color(0,1.0,0));
-                */
-
-        Color white(0.5,0.5,0.5);
-        Color red(1,0,0);
-        Color green(0,1,0);
-        Color yellow(0.5,0.5,0);
 
         Image draw;
         // for (int i=0 ; i<posB ; i++)
         //     draw.addRGB(i, green * 0.1);
-        draw.addRGB(posB, red);
+        draw.addRGB(posB, c1);
 
         // for (int i=posT+1 ; i<IMAGE_SIZE ; i++)
         //     draw.addRGB(i, red);
-        draw.addRGB(posT, green);
+        draw.addRGB(posT, c2);
 
         for (int i=posT+1 ; i<posB ; i++)
-            draw.addRGB(i,yellow);
+            draw.addRGB(i, cmix);
 
         for (int i=0 ; i<IMAGE_SIZE ; i++)
             image.addRGB(i, draw.getRGB(i));
     }
 };
 
+
+class EKG : public AbstractPattern
+{
+    Color colorLast;
+    int posLast;
+    float speed;
+    bool option;
+    bool option_set;
+
+public:
+
+    EKG() : AbstractPattern("EKG"), option_set(0)
+    {}
+
+    EKG(bool _option) :  AbstractPattern("EKG"), option(_option), option_set(1)
+    {}
+
+    void setup(PatternContext &ctx)
+    {
+        if (!option_set)
+            option = random() % 2;
+        ctx.decay = 0.99;
+        posLast = 0;
+        speed = 1.0/4.0;
+        ctx.sx = 1.0;
+        ctx.dx = -0.01;
+        ctx.dx_wrap = true;
+    }
+
+    void per_frame(PatternContext &ctx)
+    {
+        ctx.dx -= 0.1*(ctx.treb-0.5);
+        if (option)
+            ctx.dx  = ctx.dx * -1;
+    }
+
+    void per_point(PatternContext &ctx, PointContext &pt)
+    {
+    }
+
+    // void update(PatternContext &ctx, Image &image)
+    // {
+    // }
+
+    void draw(PatternContext &ctx, Image &image)
+    {
+        int pos = ((int)round(ctx.time * speed * IMAGE_SIZE) % IMAGE_SIZE);
+        Color black(0,0,0);
+        Color white(1.0,1.0,1.0);
+
+        float bass = ctx.bass-ctx.bass_att;
+        float mid = ctx.mid-ctx.mid_att;
+        float treb = ctx.treb-ctx.treb_att;
+        Color c;
+        // c = white * 0.2 + white * 0.5 * ctx.bass; // Color(mid,bass,treb) * 0.4;
+        // c = white * 0.2 + Color(bass,mid,treb) * 0.4;
+        c = Color(bass,mid,treb);
+        c.constrain2();
+        c = white * 0.3 + c * 0.7;
+        if (posLast == pos)
+        {
+            c = Color(
+                MAX(c.rgba.r,colorLast.rgba.r),
+                MAX(c.rgba.g,colorLast.rgba.g),
+                MAX(c.rgba.b,colorLast.rgba.b)
+            );
+        }
+        image.setRGB((pos+1)%IMAGE_SIZE, black);
+        image.setRGB(pos, c);
+        
+        colorLast = c;
+        posLast = pos;
+    }
+};
+
+
 void loadPatterns()
 {
-    patterns.push_back(new ColorSweep());
+    patterns.push_back(new Waterfall());
     patterns.push_back(new GreenEnvy());
     patterns.push_back(new Fractal());
     patterns.push_back(new Diffusion());
     patterns.push_back(new Equalizer());
+    patterns.push_back(new EKG());
 }
