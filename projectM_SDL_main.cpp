@@ -31,8 +31,12 @@ std::string getConfigFilePath() {
     return configFilePath;
 }
 
-int main(int argc, char *argv[]) {
-printf("main\n");fflush(stdout);
+int main(int argc, char *argv[]) 
+{
+    std::string device("");
+    if (argc > 1)
+        device = std::string((const char *)argv[1]);
+
     srand(time(0));
 
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
@@ -86,10 +90,10 @@ printf("main\n");fflush(stdout);
         settings.meshX = 30;
         settings.meshY = 30;
         settings.fps   = FPS;
-        settings.smoothPresetDuration = 3; // seconds
-        settings.presetDuration = 20; // seconds
+        settings.smoothPresetDuration = 10; // seconds
+        settings.presetDuration = 30; // seconds
         settings.easterEgg = 5.0;
-        settings.beatSensitivity = 2.0;
+        settings.beatSensitivity = 4.0;
         settings.aspectCorrection = 1;
         settings.shuffleEnabled = 1;
         settings.softCutRatingsEnabled = 1; // ???
@@ -99,18 +103,16 @@ printf("main\n");fflush(stdout);
         settings.menuFontURL = base_path + "fonts/Vera.ttf";
         settings.titleFontURL = base_path + "fonts/Vera.ttf";
         // init with settings
-printf("projectMSDL\n");fflush(stdout);
         app = new projectMSDL(settings, 0);
     }
-printf("app->init\n");fflush(stdout);
     app->init(win, rend);
 
     // get an audio input device
-printf("openAudioInput\n");fflush(stdout);
     app->openAudioInput();
-printf("beginAudioCapture\n");fflush(stdout);
     app->beginAudioCapture();
-printf("setup complete\n");fflush(stdout);
+
+    if (!device.empty())
+        app->setDMX(device);
 
     // standard main loop
     const Uint32 frame_delay = 1000/FPS;

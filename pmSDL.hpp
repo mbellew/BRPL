@@ -44,7 +44,9 @@ public:
     void renderFrame();
     void pollEvent();
     void maximize();
+    void setDMX(std::string device) { dmx_device = device; }
     std::string getActivePresetName();
+    std::string dmx_device;
 
 private:
     SDL_Window *win;

@@ -261,7 +261,7 @@ std::string projectMSDL::getActivePresetName()
 }
 
 
-#define IMAGE_SIZE 24
+#define IMAGE_SIZE 20
 #define IMAGE_SCALE ((float)IMAGE_SIZE)
 #define OB_LEFT 0
 #define OB_RIGHT (IMAGE_SIZE-1)
@@ -965,29 +965,29 @@ public:
 };
 
 
-FILE *device = stdout;
+FILE *device = 0;
 
-void drawPiano(PatternContext &ctx, Image &image)
+void drawPiano(projectMSDL *pmSDL, PatternContext &ctx, Image &image)
 {
     if (device == 0)
     {
-        device = fopen("/dev/ttyUSB0", "a");
+        if (!pmSDL->dmx_device.empty())
+            device = fopen(pmSDL->dmx_device.c_str(), "a");
+        else 
+            device = stdout;
     }
-    const bool DMX = 1;
-    const bool ONECHAR = 0;
+    if (IMAGE_SCALE == 20)
+        fprintf(device, "0,0,0,0,0,0,");
     for (int i=0 ; i<IMAGE_SIZE ; i++)
     {
         Color c = image.getRGB(i);
         int r = (int)(pow(constrain(c.rgba.r),ctx.gamma) * 255);
         int g = (int)(pow(constrain(c.rgba.g),ctx.gamma) * 255);
         int b = (int)(pow(constrain(c.rgba.b),ctx.gamma) * 255);
-        if (DMX)
-            fprintf(device, "%d,%d,%d,", r, g, b);
-        else if (ONECHAR)
-            fprintf(device, "%01x%01x%01x", r>>4, g>>4, b>>4);
-        else
-            fprintf(device, "%02x%02x%02x", r, g, b);
+        fprintf(device, "%d,%d,%d,", r, g, b);
     }
+    if (IMAGE_SCALE == 20)
+        fprintf(device, "0,0,0,0,0,0,");
     fprintf(device, "\n");
     fflush(device);
 }
@@ -1035,7 +1035,8 @@ void projectMSDL::renderFrame()
     frame.bass_att = beatDetect->bass_att;
     frame.mid_att = beatDetect->mid_att;
     frame.treb_att = beatDetect->treb_att;
-    frame.vol = beatDetect->vol; // (beatDetect->bass + beatDetect->mid + beatDetect->treb) / 3.0;
+    // frame.vol = beatDetect->vol; 
+    frame.vol = (beatDetect->bass + beatDetect->mid + beatDetect->treb) / 3.0;
     //frame.vol_att = beatDetect->vol_attr; // (beatDetect->bass_att + beatDetect->mid_att + beatDetect->treb_att) / 3.0;
 
     pattern->per_frame(frame);
@@ -1062,7 +1063,7 @@ void projectMSDL::renderFrame()
     pattern->draw(frame,work);
     stash.copyFrom(work);
     pattern->effects(frame,work);
-    drawPiano(frame,work);
+    drawPiano(this, frame, work);
     work.copyFrom(stash);
     pattern->end_frame(frame);
 }
@@ -1171,7 +1172,7 @@ public:
         ctx.ib_right = ctx.ob_right;
         ctx.ib_right.complement();
 
-        ctx.cx   = cx.next(ctx.time);
+        ctx.cx = cx.next(ctx.time);
     }
 };
 
@@ -1204,9 +1205,9 @@ public:
         //int bass = ctx.bass; // MAX(ctx.bass_att, ctx.bass);
         int bass = MAX(ctx.bass_att, ctx.bass);
         int w = MIN(IMAGE_SIZE*2/3,(int)round(bass*3));
-        image.setRGB(11-w,c);
-        image.setRGB(12+w,c);
-        for (int i=11-w+1 ; i<=12+w-1 ; i++)
+        image.setRGB(IMAGE_SIZE/2-1-w,c);
+        image.setRGB(IMAGE_SIZE/2+w,c);
+        for (int i=(IMAGE_SIZE/2-1-w)+1 ; i<=(IMAGE_SIZE/2+w)-1 ; i++)
             image.setRGB(i, 0, 0, 0);
     }
 
@@ -1224,7 +1225,7 @@ class Fractal : public AbstractPattern
     // SimpleGenerator g;
     // SimpleGenerator b;
     Spirograph x;
-    float vtime;
+    float ptime, ctime;
     bool option;
 public:
     Fractal() : AbstractPattern("fractal"), x()
@@ -1243,7 +1244,7 @@ public:
     void setup(PatternContext &ctx)
     {
         option = random() % 2;
-        vtime = ctx.time;
+        ptime = ctime = ctx.time;
         ctx.decay = 0.5;
         if (option)
             ctx.decay += 0.1;
@@ -1252,8 +1253,11 @@ public:
 
     void per_frame(PatternContext &ctx)
     {
-        vtime += ctx.dtime * ctx.bass;
-        ctx.decay = constrain(ctx.decay + 0.4 * ctx.bass / (ctx.bass_att+0.3));
+        ptime += ctx.dtime * ctx.bass_att;
+        ctime += ctx.dtime;
+        if (ctx.treb > 2.5 * ctx.treb_att)
+            ctime += 21;
+        ctx.decay = constrain(ctx.decay + 0.4 * ctx.bass / (ctx.bass_att+0.25));
     }
 
     void per_point(PatternContext &ctx, PointContext &pt)
@@ -1288,7 +1292,7 @@ public:
     }
     void draw(PatternContext &ctx, Image &image)
     {
-        Color color1 = color->next(ctx.time);
+        Color color1 = color->next(ctime);
         // Color hsl(fmod(ctx.time/3,1.0),1.0,0.5);
         // Color color2;
         // hsl2rgb(hsl.arr,color2.arr);
@@ -1296,7 +1300,7 @@ public:
 	    color1.saturate(1.0);
         //Color b(a);
         //float posx = x.next(ctx.time);
-        float posx = x.next(vtime);
+        float posx = x.next(ptime);
         //i = i - (i%2);
         image.setRGB((int)floor(posx), 0,0,0);
         image.setRGB((int)ceil(posx), 0,0,0);
@@ -1345,11 +1349,11 @@ public:
 
     void per_frame(PatternContext &ctx)
     {
-        scale = (1.2 + 2*ctx.bass) * 2*M_PI;  // waviness
+        scale = (1.2 + 2*ctx.bass_att) * 2*M_PI;  // waviness
         if (option)
-            amplitude = 0.2 * ctx.treb_att * sin(ctx.time*1.5); // speed and dir
+            amplitude = 0.3 * ctx.treb_att * sin(ctx.time*1.5); // speed and dir
         else
-            amplitude = 0.2 * ctx.treb_att;
+            amplitude = 0.3 * ctx.treb_att;
     }
 
     void per_point(PatternContext &ctx, PointContext &pt)
@@ -1386,8 +1390,8 @@ public:
 
     void effects(PatternContext &ctx, Image &image)
     {
-        if (option)
-            image.rotate(0.5);
+        // if (option)
+        //     image.rotate(0.5);
     }
 };
 
@@ -1490,14 +1494,18 @@ class EKG : public AbstractPattern
     float speed;
     bool option;
     bool option_set;
+    float vol_att;
 
 public:
 
-    EKG() : AbstractPattern("EKG"), option_set(0)
+    EKG() : AbstractPattern("EKG"), colorLast(0,0,0), option_set(0), vol_att(0)
     {}
 
-    EKG(bool _option) :  AbstractPattern("EKG"), option(_option), option_set(1)
-    {}
+    EKG(bool _option) :  EKG()
+    {
+        option = _option;
+        option_set = 1;
+    }
 
     void setup(PatternContext &ctx)
     {
@@ -1507,15 +1515,18 @@ public:
         posLast = 0;
         speed = 1.0/4.0;
         ctx.sx = 1.0;
-        ctx.dx = -0.01;
         ctx.dx_wrap = true;
     }
 
     void per_frame(PatternContext &ctx)
     {
-        ctx.dx -= 0.1*(ctx.treb-0.5);
         if (option)
-            ctx.dx  = ctx.dx * -1;
+            // ctx.dx = 0.1*(ctx.treb-0.5);
+            ctx.dx = 0.1 * (ctx.vol - vol_att);
+        else
+            ctx.dx = 0.08 * (ctx.treb - ctx.bass);
+
+        vol_att = IN(vol_att, ctx.vol, 0.2);
     }
 
     void per_point(PatternContext &ctx, PointContext &pt)
@@ -1538,9 +1549,10 @@ public:
         Color c;
         // c = white * 0.2 + white * 0.5 * ctx.bass; // Color(mid,bass,treb) * 0.4;
         // c = white * 0.2 + Color(bass,mid,treb) * 0.4;
-        c = Color(bass,mid,treb);
+        c = Color(MAX(0.2,bass),MAX(0.2,mid),MAX(0.2,treb));
         c.constrain2();
-        c = white * 0.3 + c * 0.7;
+        // c = white * 0.3 + c * 0.7;
+        //c.saturate(1.0);
         if (posLast == pos)
         {
             c = Color(
@@ -1565,5 +1577,5 @@ void loadPatterns()
     patterns.push_back(new Fractal());
     patterns.push_back(new Diffusion());
     patterns.push_back(new Equalizer());
-    patterns.push_back(new EKG());
+    patterns.push_back(new EKG(1));
 }
