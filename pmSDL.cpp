@@ -66,7 +66,7 @@ int projectMSDL::openAudioInput()
     SDL_Log("Using audio driver: %s\n", driver_name);
 
     // get audio input device
-    int count = SDL_GetNumAudioDevices(false);  // capture, please
+    int count = SDL_GetNumAudioDevices(true);  // capture, please
     if (count == 0) {
         SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "No audio capture devices found");
         SDL_Quit();
@@ -301,6 +301,10 @@ inline float constrain(float x, float mn, float mx)
 inline float constrain(float x)
 {
     return constrain(x, 0.0, 1.0);
+}
+inline int constrain(int x, int mn, int mx)
+{
+    return x<mn ? mn : x>mx ? mx : x;
 }
 
 void saturate(float *rgb, float i=1.0)
@@ -1430,12 +1434,10 @@ public:
     void per_frame(PatternContext &ctx)
     {
         posB = MAX(ctx.bass,ctx.bass_att) * (IMAGE_SCALE/2);
-        if (posB > IMAGE_SIZE-1)
-            posB = IMAGE_SIZE-1;
+        posB = constrain(posB, 0, IMAGE_SIZE-1);
 
         posT = MAX(ctx.treb,ctx.treb_att) * (IMAGE_SCALE/2);
-        if (posT > IMAGE_SIZE-1)
-            posT = IMAGE_SIZE-1;
+        posT = constrain(posT, 0, IMAGE_SIZE-1);
         posT = IMAGE_SIZE-1 - posT;
 
         ctx.cx = ((posB + posT) / 2.0) / (IMAGE_SIZE-1);
