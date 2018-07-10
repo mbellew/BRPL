@@ -38,12 +38,12 @@ SDL_AudioDeviceID projectMSDL::selectAudioInput(int count) {
     int selected = 1;
     for (int i = 0; i < count; i++)
     {
-//        if (0==strcmp("Monitor of Built-in Audio Analog Stereo",SDL_GetAudioDeviceName(i, true)))
-//            selected = i;
+//      if (0==strcmp("Monitor of Built-in Audio Analog Stereo",SDL_GetAudioDeviceName(i, true)))
+//          selected = i;
         printf("  %i: 🎤%s\n", i, SDL_GetAudioDeviceName(i, true));
     }
 
-    while (1)
+    while (count > 1)
     {
         printf("select input: ");
         int ret = scanf("%d\n", &selected);
@@ -97,8 +97,12 @@ int projectMSDL::openAudioInput()
     want.callback = projectMSDL::audioInputCallbackF32;
     want.userdata = this;
 
-    audioDeviceID = SDL_OpenAudioDevice(SDL_GetAudioDeviceName(selectedAudioDevice, true), true, &want, &have, 0);
-
+    int retry = 0;
+    do
+    {
+        audioDeviceID = SDL_OpenAudioDevice(SDL_GetAudioDeviceName(selectedAudioDevice, true), true, &want, &have, 0);
+    } 
+    while (audioDeviceID == 0 && retry++ < 3);
     if (audioDeviceID == 0) {
         SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Failed to open audio capture device: %s", SDL_GetError());
         SDL_Quit();
@@ -228,6 +232,11 @@ void projectMSDL::pollEvent() {
             case SDL_QUIT:
                 done = true;
                 break;
+            // case SDL_AUDIODEVICEREMOVED:
+            // case SDL_AUDIODEVICEADDED:
+            //     endAudioCapture();
+            //     openAudioInput();
+            //     beginAudioCapture();
         }
     }
 }
@@ -545,7 +554,7 @@ class PointContext
 public:
     // per_point in
     float rad;  // distance from center
-    // per_point in/out 
+    // per_point in/out
     float sx;
     float cx;
     float dx;
@@ -592,168 +601,13 @@ public:
     float bass_att;
     float mid_att;
     float treb_att;
+    bool  beat;
+    float lastbeat;
+    float interval;
 
     PointContext points[IMAGE_SIZE];
 };
 
-#if 0
-class Image
-{
-public:
-    float rgb[3][IMAGE_SIZE];
-
-    Image()
-    {
-        memset(rgb, 0, sizeof(rgb));
-    }
-    Image(Image &from)
-    {
-        memcpy(rgb, from.rgb, sizeof(rgb));
-    }
-    void copyFrom(Image &from)
-    {
-        memcpy(rgb, from.rgb, sizeof(rgb));
-    }
-
-    float getValue(unsigned color, float f)
-    {
-        int i=(int)floor(f);
-        f = f - i;
-        if (i <= 0)
-            return rgb[color][0];
-        if (i+1 >= IMAGE_SIZE-1)
-            return rgb[color][IMAGE_SIZE-1];
-        return IN(rgb[color][i], rgb[color][i+1], f);
-    }
-
-    float getValue_wrap(unsigned color, float f)
-    {
-        int i=(int)floor(f);
-        f = f - i;
-        if (i < 0)
-            i += IMAGE_SIZE;
-        if (i >= IMAGE_SIZE)
-            i = i - IMAGE_SIZE;
-        int j = (i+1) % IMAGE_SIZE;
-        return IN(rgb[color][i], rgb[color][j], f);
-    }
-
-    void getRGB(float f, float *rgb)
-    {
-        rgb[0] = getValue(RED, f);
-        rgb[1] = getValue(GREEN, f);
-        rgb[2] = getValue(BLUE, f);
-    }
-
-    Color getRGB(float f)
-    {
-        Color c(getValue(RED, f), getValue(GREEN, f), getValue(BLUE, f));
-        return c;
-    }
-
-    Color getRGB(int i)
-    {
-        Color c(rgb[RED][i], rgb[GREEN][i], rgb[BLUE][i]);
-        return c;
-    }
-
-    void getRGB_wrap(float f, float *rgb)
-    {
-        rgb[0] = getValue_wrap(RED, f);
-        rgb[1] = getValue_wrap(GREEN, f);
-        rgb[2] = getValue_wrap(BLUE, f);
-    }
-
-    void setRGB(int i, float r, float g, float b)
-    {
-        rgb[RED][i]   = constrain(r);
-        rgb[GREEN][i] = constrain(g);
-        rgb[BLUE][i]  = constrain(b);
-    }
-
-    void setRGB(int i, Color &c)
-    {
-        rgb[RED][i]   = constrain(c.rgba.r);
-        rgb[GREEN][i] = constrain(c.rgba.g);
-        rgb[BLUE][i]  = constrain(c.rgba.b);
-    }
-
-    void setRGBA(int i, float r, float g, float b, float a)
-    {
-        rgb[RED][i]   = IN(rgb[RED][i], r, a);
-        rgb[GREEN][i] = IN(rgb[GREEN][i], g, a);
-        rgb[BLUE][i]  = IN(rgb[BLUE][i], b, a);
-    }
-
-    void setRGBA(int i, Color &c)
-    {
-        rgb[RED][i]   = IN(rgb[RED][i],   c.rgba.r, c.rgba.a);
-        rgb[GREEN][i] = IN(rgb[GREEN][i], c.rgba.g, c.rgba.a);
-        rgb[BLUE][i]  = IN(rgb[BLUE][i],  c.rgba.b, c.rgba.a);
-    }
-
-    void stretch(float sx, float cx)
-    {
-        Image cp(*this);
-        float center = IN(LEFTMOST_PIXEL, RIGHTMOST_PIXEL, cx);
-        for (int i=LEFTMOST_PIXEL ; i<=RIGHTMOST_PIXEL ; i++)
-        {
-            float from = (i-center)/sx + center;
-            rgb[RED][i]   = cp.getValue( RED,   from );
-            rgb[GREEN][i] = cp.getValue( GREEN, from );
-            rgb[BLUE][i]  = cp.getValue( BLUE,  from );
-        }
-    }
-
-    void stretch(PatternContext &ctx)
-    {
-        Image cp(*this);
-        for (int i=LEFTMOST_PIXEL ; i<=RIGHTMOST_PIXEL ; i++)
-        {
-            float center = IN(LEFTMOST_PIXEL, RIGHTMOST_PIXEL, ctx.points[i].cx);
-            float from = (i-center)/ctx.points[i].sx + center;
-            rgb[RED][i]   = cp.getValue( RED,   from );
-            rgb[GREEN][i] = cp.getValue( GREEN, from );
-            rgb[BLUE][i]  = cp.getValue( BLUE,  from );
-        }
-    }
-
-    void move(float dx)
-    {
-        Image cp(*this);
-        for (int i=LEFTMOST_PIXEL ; i<=RIGHTMOST_PIXEL ; i++)
-        {
-            float from = i + dx*IMAGE_SIZE;
-            rgb[RED][i]   = cp.getValue( RED,   from );
-            rgb[GREEN][i] = cp.getValue( GREEN, from );
-            rgb[BLUE][i]  = cp.getValue( BLUE,  from );
-        }
-    }
-
-    void rotate(float dx)
-    {
-        Image cp(*this);
-        for (int i=LEFTMOST_PIXEL ; i<=RIGHTMOST_PIXEL ; i++)
-        {
-            float from = i + dx*IMAGE_SIZE;
-            rgb[RED][i]   = cp.getValue_wrap( RED,   from );
-            rgb[GREEN][i] = cp.getValue_wrap( GREEN, from );
-            rgb[BLUE][i]  = cp.getValue_wrap( BLUE,  from );
-        }
-    }
-
-    void decay(float d)
-    {
-        for (int i=LEFTMOST_PIXEL ; i<=RIGHTMOST_PIXEL ; i++)
-        {
-            rgb[RED][i]   *= d;
-            rgb[GREEN][i] *= d;
-            rgb[BLUE][i]  *= d;
-        }
-    }
-};
-
-#else
 
 class Image
 {
@@ -944,7 +798,7 @@ public:
             map[i] *= d;
     }
 };
-#endif
+
 
 class Pattern
 {
@@ -977,11 +831,9 @@ void drawPiano(projectMSDL *pmSDL, PatternContext &ctx, Image &image)
     {
         if (!pmSDL->dmx_device.empty())
             device = fopen(pmSDL->dmx_device.c_str(), "a");
-        else 
+        else
             device = stdout;
     }
-    if (IMAGE_SCALE == 20)
-        fprintf(device, "0,0,0,0,0,0,");
     for (int i=0 ; i<IMAGE_SIZE ; i++)
     {
         Color c = image.getRGB(i);
@@ -990,8 +842,7 @@ void drawPiano(projectMSDL *pmSDL, PatternContext &ctx, Image &image)
         int b = (int)(pow(constrain(c.rgba.b),ctx.gamma) * 255);
         fprintf(device, "%d,%d,%d,", r, g, b);
     }
-    if (IMAGE_SCALE == 20)
-        fprintf(device, "0,0,0,0,0,0,");
+    fprintf(device, "0,0,0,0,0,0,0,0,0,0,0,0,");
     fprintf(device, "\n");
     fflush(device);
 }
@@ -1005,11 +856,62 @@ void loadPatterns();
 std::vector<Pattern *> patterns;
 Pattern *currentPattern = NULL;
 
+class MyBeat007 
+{
+    float sure;
+    float maxdbass;
+    float pbass;
+public:
+    bool beat;
+    float lastbeat;
+    float interval;
+
+    MyBeat007() :
+        sure(0.6), 
+        interval(40),
+        lastbeat(0),
+        maxdbass(0.012)
+    {}
+
+    void update(float frame, float fps, BeatDetect *beatDetect)
+    {
+        float dbass = (beatDetect->bass - pbass) / fps;
+        //fprintf(stderr, "%lf %lf\n", dbass, maxdbass);
+        beat = dbass > 0.6*maxdbass && frame-lastbeat > 1.0/3.0;
+        if (beat && abs(frame-(lastbeat+interval))<1.0/5.0)
+            sure = sure+0.095f;
+        else if (beat)
+            beat = sure-0.095f;
+        else
+            sure = sure * 0.9996;
+        sure = constrain(sure, 0.5f, 1.0f);
+
+        bool cheat = frame > lastbeat+interval + int(1.0/10.0) && sure > 0.91;
+        if (cheat)
+        {
+            beat = 1;
+            sure = sure * 0.95;
+        }
+        maxdbass = MAX(maxdbass*0.999,dbass);
+        maxdbass = constrain(maxdbass,0.012, 0.02);
+        if (beat)
+        {
+            interval = frame-lastbeat;
+            lastbeat = frame - (cheat ? (int)(1.0/10.0) : 0);
+        }
+        pbass = beatDetect->bass;
+    }
+};
+
+MyBeat007 mybeat;
+
+
 void projectMSDL::renderFrame()
 {
     float prev_time = timeKeeper->GetRunningTime();
     timeKeeper->UpdateTimers();
     beatDetect->detectFromSamples();
+    mybeat.update(timeKeeper->GetRunningTime(), 30, beatDetect);
 
     if (patterns.size() == 0)
         loadPatterns();
@@ -1039,9 +941,12 @@ void projectMSDL::renderFrame()
     frame.bass_att = beatDetect->bass_att;
     frame.mid_att = beatDetect->mid_att;
     frame.treb_att = beatDetect->treb_att;
-    // frame.vol = beatDetect->vol; 
+    // frame.vol = beatDetect->vol;
     frame.vol = (beatDetect->bass + beatDetect->mid + beatDetect->treb) / 3.0;
     //frame.vol_att = beatDetect->vol_attr; // (beatDetect->bass_att + beatDetect->mid_att + beatDetect->treb_att) / 3.0;
+    frame.beat = mybeat.beat;
+    frame.lastbeat = mybeat.lastbeat;
+    frame.interval = mybeat.interval;
 
     pattern->per_frame(frame);
     for (int i=0 ; i<IMAGE_SIZE ; i++)
@@ -1140,9 +1045,10 @@ class Waterfall : public AbstractPattern
     ColorGenerator *rb_color;
     SimpleGenerator cx;
     bool option;
+    
 public:
     Waterfall() : AbstractPattern((const char *)"waterfall"),
-        cx(0.1, 0.9, 9)
+        cx(0.1, 0.9, 6)
     {
         lb_color = new ColorGenerator(
             new SimpleGenerator(0.2, 0.8, 5.5),
@@ -1158,10 +1064,10 @@ public:
 
     void setup(PatternContext &ctx)
     {
+        option = random() % 2;
         ctx.sx = 0.9;
         ctx.ob_size = 1;
-        option = random() % 2;
-        ctx.ib_size = option;       
+        //ctx.ib_size = option;
     }
 
     void per_frame(PatternContext &ctx)
@@ -1171,21 +1077,38 @@ public:
         ctx.ib_left = ctx.ob_left;
         ctx.ib_left.complement();
 
-        ctx.ob_right = rb_color->next( ctx.time ); //Color( ctx.time, rb_r, rb_g, rb_b );
+        // if (option)
+        // {
+        //     ctx.ob_right = lb_color->next( ctx.time );
+        //     ctx.ob_right.complement();
+        // }
+        // else
+        {
+            ctx.ob_right = rb_color->next( ctx.time );
+        }
         ctx.ob_right *= 0.5+(ctx.bass/2.0);
         ctx.ib_right = ctx.ob_right;
         ctx.ib_right.complement();
 
         ctx.cx = cx.next(ctx.time);
     }
+
+    void effects(PatternContext &ctx, Image &image)
+    {
+        if (option)
+        {
+            float s = fmodf(sin(ctx.time/5.0), 1.0);
+            image.rotate(s);
+        }
+    }
 };
 
 
-class GreenEnvy : public AbstractPattern
+class GreenFlash : public AbstractPattern
 {
     bool rotate_effect;
 public:
-    GreenEnvy() : AbstractPattern((const char *)"green envy")
+    GreenFlash() : AbstractPattern((const char *)"green flash")
     {}
 
     void setup(PatternContext &ctx)
@@ -1380,13 +1303,7 @@ public:
         c1 = c + Color(mid,bass,treb) * 0.4;
         c2 = c1;
         if (option)
-            c2.complement(); //c.complement() + Color(mid,bass,treb) * 0.4;
-
-        // c1 = c;
-        // c1.saturate(1.0);
-        // c2 = c1;
-        // if (option)
-        //     c2 = c1.complement();
+            c2 = c.complement() + Color(mid,bass,treb) * 0.4;
 
         image.setRGB(IMAGE_SIZE/2-1, c1);
         image.setRGB(IMAGE_SIZE/2, c2);
@@ -1394,8 +1311,8 @@ public:
 
     void effects(PatternContext &ctx, Image &image)
     {
-        // if (option)
-        //     image.rotate(0.5);
+        if (!option)
+            image.rotate(0.5);
     }
 };
 
@@ -1450,6 +1367,8 @@ public:
             pt.cx = 0;
         else if (i > posB && i > posT)
             pt.cx = 1;
+        else 
+            pt.cx = (posT + posB) / (2.0*IMAGE_SCALE);
     }
 
     void update(PatternContext &ctx, Image &image)
@@ -1565,19 +1484,93 @@ public:
         }
         image.setRGB((pos+1)%IMAGE_SIZE, black);
         image.setRGB(pos, c);
-        
+
         colorLast = c;
         posLast = pos;
     }
 };
 
 
+
+class Pebbles : public AbstractPattern
+{
+    bool option;
+    float vol_mean;
+    float last_cx;
+    Generator *r;
+    Generator *g;
+// per_frame_1=wave_r = 0.5 + 0.5*sin(1.6*time);
+// per_frame_2=wave_g = 0.5 + 0.5*sin(4.1*time);
+// per_frame_3=wave_b = -1 + (1-wave_r + 1-wave_g);
+
+public:
+
+    Pebbles() : AbstractPattern("Pebbles"), vol_mean(0.1), last_cx(0.5),
+        r(new SimpleGenerator(0.0,1.0,1.6/3)),
+        g(new SimpleGenerator(0.0,1.0,4.1/3))
+    {
+    }
+
+    void setup(PatternContext &ctx)
+    {
+        option = random() % 2;
+        ctx.decay = option ? 0.95 : 0.99;
+        ctx.dx_wrap = true;
+    }
+
+    void per_frame(PatternContext &ctx)
+    {
+        vol_mean = IN(vol_mean, ctx.vol, 0.05);
+        vol_mean = constrain(vol_mean, 0.1f, 10000.0f);
+        if (ctx.beat)
+        {
+            last_cx = random() / (float)RAND_MAX;
+        }
+        ctx.cx = last_cx;
+    }
+
+    void per_point(PatternContext &ctx, PointContext &pt)
+    {
+        // more sx near and less far away, going for pebble effect
+        float f = (ctx.time - ctx.lastbeat) / ctx.interval;
+        float dist = pt.rad - (ctx.cx-0.5);
+        float radius = 0.1 + f/2.0;
+
+        pt.sx = 1.0;
+        if (fabs(dist) < radius)
+        {
+            if (dist < 0)
+                pt.dx = -1 * ctx.vol/30;
+            else
+                pt.dx = ctx.vol/30;
+        }
+    };
+
+    void draw(PatternContext &ctx, Image &image)
+    {
+        float f = (ctx.time - ctx.lastbeat) / ctx.interval;
+        if (f < 0.3)
+        {
+            float shape_r = r->next(ctx.time);
+            float shape_g = g->next(ctx.time);
+            float shape_b = -1 + (1-shape_r + 1-shape_g);
+            Color c(shape_r,shape_g,shape_b);
+            float pos = IN(LEFTMOST_PIXEL,RIGHTMOST_PIXEL,ctx.cx);
+            image.setRGB(pos, c * (1.0-f));
+        }
+    }
+};
+
+
+
+
 void loadPatterns()
 {
     patterns.push_back(new Waterfall());
-    patterns.push_back(new GreenEnvy());
+    patterns.push_back(new GreenFlash());
     patterns.push_back(new Fractal());
     patterns.push_back(new Diffusion());
     patterns.push_back(new Equalizer());
-    patterns.push_back(new EKG(1));
+    patterns.push_back(new EKG());
+    patterns.push_back(new Pebbles());
 }
