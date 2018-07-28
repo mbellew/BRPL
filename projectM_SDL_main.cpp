@@ -99,7 +99,7 @@ int main(int argc, char *argv[])
         settings.softCutRatingsEnabled = 1; // ???
         // get path to our app, use CWD for presets/fonts/etc
         std::string base_path = SDL_GetBasePath();
-        settings.presetURL = "/home/matthew/Projects/projectm/presets/presets_tryptonaut";
+        settings.presetURL = "/home/pi/projectm/presets/presets_tryptonaut";
         settings.menuFontURL = base_path + "fonts/Vera.ttf";
         settings.titleFontURL = base_path + "fonts/Vera.ttf";
         // init with settings
@@ -121,7 +121,7 @@ int main(int argc, char *argv[])
         app->renderFrame();
         app->pollEvent();
         Uint32 elapsed = SDL_GetTicks() - last_time;
-        if (elapsed < frame_delay)
+        if (elapsed < frame_delay && !app->done)
             SDL_Delay(frame_delay - elapsed);
         last_time = SDL_GetTicks();
     }

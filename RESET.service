@@ -1,0 +1,13 @@
+[Unit]
+Description=Melton John (reset button)
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/projectm/src/BRPL
+ExecStart=/bin/bash -c /home/pi/projectm/src/BRPL/RESET
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

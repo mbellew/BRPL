@@ -1,0 +1,24 @@
+LAST=1
+sleep 2
+
+while :
+do
+    sleep 0.25 
+    PIN=$(gpio read 29)
+    echo $PIN
+    if [ $PIN != $LAST ]; then
+        if [ $PIN = 0 ];  then
+            echo systemctl stop BRPL
+	    sleep 0.10
+            systemctl stop BRPL
+	    while [ $(gpio read 29) = 0 ] ;  do
+	       echo 255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255 | ola_streaming_client -u 1
+	    done
+        else
+            echo systemctl start BRPL
+            systemctl start BRPL
+        fi
+        LAST=$PIN
+        sleep 1
+    fi
+done

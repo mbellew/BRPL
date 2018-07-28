@@ -1,0 +1,13 @@
+#!/bin/bash
+
+
+_term() { 
+  #kill -SIGTERM $(cat /run/BRPL.pid)
+  killall -SIGTERM projectMSDL
+  rm /run/BRPL.pid
+}
+trap _term SIGTERM
+
+# NOTE ola_streaming_client does not like to run as root
+/home/pi/projectm/src/BRPL/projectMSDL 2>/dev/null | ola_streaming_client -u 1
+#(/home/pi/projectm/src/BRPL/projectMSDL & echo $! >&3) 3> /run/BRPL.pid | (su pi -c ola_streaming_client -u 1)

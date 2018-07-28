@@ -9,6 +9,17 @@
 #include "Renderer/BeatDetect.hpp"
 #include "TimeKeeper.hpp"
 
+void clearPiano();
+
+
+volatile sig_atomic_t terminate = 0;
+
+void term(int signum)
+{
+    terminate = 1;
+}
+
+
 
 void projectMSDL::audioInputCallbackF32(void *userdata, unsigned char *stream, int len)
 {
@@ -232,13 +243,13 @@ void projectMSDL::pollEvent() {
             case SDL_QUIT:
                 done = true;
                 break;
-            // case SDL_AUDIODEVICEREMOVED:
-            // case SDL_AUDIODEVICEADDED:
-            //     endAudioCapture();
-            //     openAudioInput();
-            //     beginAudioCapture();
         }
     }
+    if (terminate)
+        done = true;
+    if (done)
+       clearPiano();
+   return !done;
 }
 
 
@@ -256,7 +267,15 @@ projectMSDL::projectMSDL(std::string config_file, int flags) : projectM(config_f
     isFullScreen = false;
 }
 
-void projectMSDL::init(SDL_Window *window, SDL_Renderer *renderer) {
+
+
+void projectMSDL::init(SDL_Window *window, SDL_Renderer *renderer) 
+{
+    struct sigaction action;
+    memset(&action, 0, sizeof(struct sigaction));
+    action.sa_handler = term;
+    sigaction(SIGTERM, &action, NULL);
+
     win = window;
     rend = renderer;
     // selectRandom(true);
@@ -833,6 +852,7 @@ void drawPiano(projectMSDL *pmSDL, PatternContext &ctx, Image &image)
             device = fopen(pmSDL->dmx_device.c_str(), "a");
         else
             device = stdout;
+       clearPiano();
     }
     for (int i=0 ; i<IMAGE_SIZE ; i++)
     {
@@ -842,9 +862,20 @@ void drawPiano(projectMSDL *pmSDL, PatternContext &ctx, Image &image)
         int b = (int)(pow(constrain(c.rgba.b),ctx.gamma) * 255);
         fprintf(device, "%d,%d,%d,", r, g, b);
     }
-    fprintf(device, "0,0,0,0,0,0,0,0,0,0,0,0,");
     fprintf(device, "\n");
     fflush(device);
+}
+
+
+void clearPiano()
+{
+    if (device)
+    {
+        for (int i=0 ; i<IMAGE_SIZE+4 ; i++)
+            fputs("0,0,0,", device);
+        fputs("\n", device);
+        fflush(device);
+    }
 }
 
 

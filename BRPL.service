@@ -1,0 +1,14 @@
+[Unit]
+Description=Melton John (visualizer)
+After=network.target
+
+[Service]
+Type=simple
+#PIDFile=/run/BRPL.pid
+User=pi
+WorkingDirectory=/home/pi/projectm/src/BRPL
+ExecStart=/bin/bash -c /home/pi/projectm/src/BRPL/BRPL
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
