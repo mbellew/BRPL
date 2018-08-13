@@ -42,7 +42,7 @@ public:
     void toggleFullScreen();
     void resize(unsigned int width, unsigned int height);
     void renderFrame();
-    void pollEvent();
+    bool pollEvent();
     void maximize();
     void setDMX(std::string device) { dmx_device = device; }
     std::string getActivePresetName();

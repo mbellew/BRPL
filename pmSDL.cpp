@@ -8,6 +8,7 @@
 #include "pmSDL.hpp"
 #include "Renderer/BeatDetect.hpp"
 #include "TimeKeeper.hpp"
+#include "signal.h"
 
 void clearPiano();
 
@@ -224,7 +225,7 @@ void projectMSDL::resize(unsigned int width_, unsigned int height_) {
     projectM_resetGL(width, height);
 }
 
-void projectMSDL::pollEvent() {
+bool projectMSDL::pollEvent() {
     SDL_Event evt;
 
     while (SDL_PollEvent(&evt))
@@ -340,7 +341,7 @@ void saturate(float *rgb, float i=1.0)
     float m = MAX(rgb[0], MAX(rgb[1],rgb[2]));
     if (m <= 0)
     {
-        rgb[0] = rgb[1] = rgb[2] = i;
+        rgb[0] = rgb[1] = rgb[2] = 0;
     }
     else
     {
@@ -956,8 +957,8 @@ void projectMSDL::renderFrame()
         if (p == currentPattern && patterns.size() > 1)
             p = patterns.at(rand() % patterns.size());
         currentPattern = p;
-        fprintf(stderr, "%s\n", currentPattern->name().c_str());
         currentPattern->setup(context);
+        fprintf(stderr, "%s\n", currentPattern->name().c_str());
         timeKeeper->StartPreset();
     }
     Pattern *pattern = currentPattern;
@@ -1075,11 +1076,11 @@ class Waterfall : public AbstractPattern
     ColorGenerator *lb_color;
     ColorGenerator *rb_color;
     SimpleGenerator cx;
-    bool option;
+    bool option=false, option_set = false;
     
 public:
     Waterfall() : AbstractPattern((const char *)"waterfall"),
-        cx(0.1, 0.9, 6)
+        cx(0.05, 0.95, 6)
     {
         lb_color = new ColorGenerator(
             new SimpleGenerator(0.2, 0.8, 5.5),
@@ -1093,12 +1094,20 @@ public:
         );
     }
 
+    Waterfall(bool opt) : Waterfall()
+    {
+        option = opt;
+        option_set = 1;
+    }
+
     void setup(PatternContext &ctx)
     {
-        option = random() % 2;
+        if (!option_set)
+            option = random() % 2;
         ctx.sx = 0.9;
         ctx.ob_size = 1;
         //ctx.ib_size = option;
+        pattern_name = std::string("waterfall ") + (option?"true":"false");
     }
 
     void per_frame(PatternContext &ctx)
@@ -1122,13 +1131,16 @@ public:
         ctx.ib_right.complement();
 
         ctx.cx = cx.next(ctx.time);
+    
+        ctx.sx = 0.99 - 0.1 * ctx.bass;
+        //fprintf(stderr,"%lf\n", ctx.sx);
     }
 
     void effects(PatternContext &ctx, Image &image)
     {
         if (option)
         {
-            float s = fmodf(sin(ctx.time/5.0), 1.0);
+            float s = sin(ctx.time/15.0);
             image.rotate(s);
         }
     }
@@ -1184,7 +1196,8 @@ class Fractal : public AbstractPattern
     // SimpleGenerator b;
     Spirograph x;
     float ptime, ctime;
-    bool option;
+    bool option, option_set;
+
 public:
     Fractal() : AbstractPattern("fractal"), x()
     {
@@ -1199,14 +1212,20 @@ public:
         x.a = a; x.b = b;
     }
 
+    Fractal(bool opt) : Fractal()
+    {
+        option = opt;
+        option_set = true;
+    }
+
     void setup(PatternContext &ctx)
     {
-        option = random() % 2;
+        if (!option_set)
+            option = random() % 2;
         ptime = ctime = ctx.time;
-        ctx.decay = 0.5;
-        if (option)
-            ctx.decay += 0.1;
+        ctx.decay = 0.6;
         ctx.sx = 0.5;
+        pattern_name = std::string("fractal ") + (option?"true":"false");
     }
 
     void per_frame(PatternContext &ctx)
@@ -1248,21 +1267,21 @@ public:
         }
         image.decay(ctx.decay);
     }
+
     void draw(PatternContext &ctx, Image &image)
     {
-        Color color1 = color->next(ctime);
-        // Color hsl(fmod(ctx.time/3,1.0),1.0,0.5);
-        // Color color2;
-        // hsl2rgb(hsl.arr,color2.arr);
-
-	    color1.saturate(1.0);
-        //Color b(a);
-        //float posx = x.next(ctx.time);
+        Color c;
+        if (option)
+            c = Color(1.0,1.0,1.0);
+        else
+        {
+            c = color->next(ctime);
+    	    c.saturate(1.0);
+        }
         float posx = x.next(ptime);
-        //i = i - (i%2);
         image.setRGB((int)floor(posx), 0,0,0);
         image.setRGB((int)ceil(posx), 0,0,0);
-        image.addRGB(posx, color1);
+        image.addRGB(posx, c);
     }
 
     void effects(PatternContext &ctx, Image &image)
@@ -1303,6 +1322,7 @@ public:
         ctx.decay = 1.0;
         ctx.sx = 1.03;
         ctx.dx_wrap = 1;
+        pattern_name = std::string("diffusion ") + (option?"true":"false");
     }
 
     void per_frame(PatternContext &ctx)
@@ -1348,6 +1368,83 @@ public:
 };
 
 
+class Diffusion2 : public AbstractPattern
+{
+public:
+    ColorGenerator *color;
+    float scale;
+    float amplitude;
+
+    bool option;
+    bool option_set;
+
+    Diffusion2() : AbstractPattern("diffusion"), option_set(0)
+    {
+        color = new ColorGenerator(
+            new SimpleGenerator(0.1, 0.7, 2*M_PI/1.517),
+            new SimpleGenerator(0.1, 0.7, 2*M_PI/1.088),
+            new SimpleGenerator(0.1, 0.7, 2*M_PI/1.037)
+        );
+    }
+
+    Diffusion2(bool _option) : Diffusion2()
+    {
+        option = _option;
+        option_set = 1;
+    }
+
+    void setup(PatternContext &ctx)
+    {
+        if (!option_set)
+            option = random() % 2;
+        ctx.decay = 1.0;
+        ctx.sx = 1.03;
+        ctx.dx_wrap = 1;
+        pattern_name = std::string("diffusion2 ") + (option?"true":"false");
+    }
+
+    void per_frame(PatternContext &ctx)
+    {
+        scale = (1.2 + 2*ctx.bass_att) * 2*M_PI;  // waviness
+        amplitude = 0.3 * ctx.treb_att;
+    }
+
+    void per_point(PatternContext &ctx, PointContext &pt)
+    {
+        float x = scale * pt.rad;
+        float wave_time = 0.0;
+        float modifier = 1.0 + (ctx.bass-ctx.bass_att)*0.2;
+//        pt.sx = pt.sx + sin(x + wave_time*ctx.time) * amplitude;
+        pt.sx = pt.sx + sin(fabs(x) * modifier) * amplitude;
+        // pt.sx = pt.sx + sin(x + wave_time*ctx.time) * amplitude;
+    }
+
+    void draw(PatternContext &ctx, Image &image)
+    {
+        float bass = constrain(MAX(ctx.bass,ctx.bass_att)-1.3);
+        float mid = constrain(MAX(ctx.mid,ctx.mid_att)-1.3);
+        float treb = constrain(MAX(ctx.treb,ctx.treb_att)-1.3);
+        Color c = color->next( ctx.time * 2 );
+        Color c1, c2;
+
+        c1 = c + Color(mid,bass,treb) * 0.4;
+        c2 = c1;
+        if (option)
+            c2 = c.complement() + Color(mid,bass,treb) * 0.4;
+
+        image.setRGB(IMAGE_SIZE/2-1, c1);
+        image.setRGB(IMAGE_SIZE/2, c2);
+    }
+
+    void effects(PatternContext &ctx, Image &image)
+    {
+        if (!option)
+            image.rotate(0.5);
+    }
+};
+
+
+
 class Equalizer : public AbstractPattern
 {
     bool option;
@@ -1377,6 +1474,7 @@ public:
             c2 = Color(1,1,0);
             cmix = Color(0,1,0);
         }
+        pattern_name = std::string("equalizer ") + (option?"true":"false");
     }
 
     void per_frame(PatternContext &ctx)
@@ -1468,6 +1566,7 @@ public:
         speed = 1.0/4.0;
         ctx.sx = 1.0;
         ctx.dx_wrap = true;
+        pattern_name = std::string("ekg ") + (option?"true":"false");
     }
 
     void per_frame(PatternContext &ctx)
@@ -1522,10 +1621,73 @@ public:
 };
 
 
+class EKG2 : public AbstractPattern
+{
+    Color colorLast;
+    float pos;
+    bool option;
+    bool option_set;
+    float vol_att;
+    ColorGenerator *color;
+
+public:
+
+    EKG2() : AbstractPattern("EKG2"), colorLast(0,0,0), option_set(0), vol_att(0)
+    {
+         color = new ColorGenerator(
+            new SimpleGenerator(0.1, 0.7, 2*M_PI/1.517),
+            new SimpleGenerator(0.1, 0.7, 2*M_PI/1.088),
+            new SimpleGenerator(0.1, 0.7, 2*M_PI/1.037)
+        );
+    }
+
+    EKG2(bool _option) :  EKG2()
+    {
+        option = _option;
+        option_set = 1;
+    }
+
+    void setup(PatternContext &ctx)
+    {
+        if (!option_set)
+            option = random() % 2;
+        ctx.decay = 0.98;
+        ctx.sx = 1.0;
+        ctx.dx_wrap = true;
+        pattern_name = std::string("ekg2 ") + (option?"true":"false");
+    }
+
+    void per_frame(PatternContext &ctx)
+    {
+        pos += 0.08 * ctx.treb;
+        ctx.dx = 0.03 * ctx.treb - 0.06 * ctx.bass;
+        vol_att = IN(vol_att, ctx.vol, 0.3);
+    }
+
+    void per_point(PatternContext &ctx, PointContext &pt)
+    {
+    }
+
+    // void update(PatternContext &ctx, Image &image)
+    // {
+    // }
+
+    void draw(PatternContext &ctx, Image &image)
+    {
+        Color c = option ? Color(1.0,1.0,1.0) : color->next(ctx.time);
+        c.saturate(MIN(1.0,ctx.vol));;
+    
+        int p = ((int)round(pos)) % IMAGE_SIZE;
+        image.setRGB(p, c);
+        image.setRGB((p+1)%IMAGE_SIZE, Color(0,0,0));
+    }
+};
+
+
 
 class Pebbles : public AbstractPattern
 {
-    bool option;
+    bool option, option_set;
     float vol_mean;
     float last_cx;
     Generator *r;
@@ -1542,11 +1704,19 @@ public:
     {
     }
 
+    Pebbles(bool opt) : Pebbles()
+    {
+        option = opt;
+        option_set = true;
+    }
+
     void setup(PatternContext &ctx)
     {
-        option = random() % 2;
-        ctx.decay = option ? 0.95 : 0.99;
+        if (!option_set)
+            option = random() % 2;
+        ctx.decay = option ? 0.97 : 0.99;
         ctx.dx_wrap = true;
+        pattern_name = std::string("pebbles ") + (option?"true":"false");
     }
 
     void per_frame(PatternContext &ctx)
@@ -1562,18 +1732,18 @@ public:
 
     void per_point(PatternContext &ctx, PointContext &pt)
     {
-        // more sx near and less far away, going for pebble effect
         float f = (ctx.time - ctx.lastbeat) / ctx.interval;
         float dist = pt.rad - (ctx.cx-0.5);
         float radius = 0.1 + f/2.0;
 
         pt.sx = 1.0;
-        if (fabs(dist) < radius)
+        if (option || fabs(dist) < radius)
         {
+            float speed = ctx.vol / 40;
             if (dist < 0)
-                pt.dx = -1 * ctx.vol/30;
+                pt.dx = -1 * speed;
             else
-                pt.dx = ctx.vol/30;
+                pt.dx = speed;
         }
     };
 
@@ -1597,11 +1767,13 @@ public:
 
 void loadPatterns()
 {
-    patterns.push_back(new Waterfall());
-    patterns.push_back(new GreenFlash());
-    patterns.push_back(new Fractal());
-    patterns.push_back(new Diffusion());
-    patterns.push_back(new Equalizer());
-    patterns.push_back(new EKG());
-    patterns.push_back(new Pebbles());
+    // patterns.push_back(new Waterfall());
+    // patterns.push_back(new GreenFlash());
+    // patterns.push_back(new Fractal());
+    // patterns.push_back(new Diffusion2());
+    // patterns.push_back(new Equalizer());
+    // patterns.push_back(new EKG2());
+    // patterns.push_back(new Pebbles());
+
+    patterns.push_back(new Pebbles(false));
 }
