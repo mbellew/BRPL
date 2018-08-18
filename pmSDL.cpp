@@ -21,7 +21,7 @@ bool randomBool()
 {
     return ((unsigned)random()) & 0x0001 ? true : false;
 }
-bool randomFloat()
+float randomFloat()
 {
     return random() / (float)RAND_MAX;
 }
@@ -344,6 +344,10 @@ inline float constrain(float x, float mn, float mx)
 {
     return x<mn ? mn : x>mx ? mx : x;
 }
+inline float constrainf(float x, float mn, float mx)
+{
+    return x<mn ? mn : x>mx ? mx : x;
+}
 inline float constrain(float x)
 {
     return constrain(x, 0.0, 1.0);
@@ -515,10 +519,18 @@ Color operator *( const Color &c, float f )
 
 Color & operator +=( Color &c, const Color &a )
 {
-    c.rgba.r += a.rgba.r;
-    c.rgba.g += a.rgba.g;
-    c.rgba.b += a.rgba.b;
-    c.rgba.a += a.rgba.a;
+    if (a.rgba.a == 1.0)
+    {
+        c.rgba.r += a.rgba.r;
+        c.rgba.g += a.rgba.g;
+        c.rgba.b += a.rgba.b;
+        c.rgba.a = 1.0;
+        return c;
+    }
+    c.rgba.r = IN(c.rgba.r, a.rgba.r, a.rgba.a);
+    c.rgba.g = IN(c.rgba.g, a.rgba.g, a.rgba.a);
+    c.rgba.b = IN(c.rgba.b, a.rgba.b, a.rgba.a);
+    c.rgba.a = 1.0;
     return c;
 }
 
@@ -660,53 +672,77 @@ public:
     {
         return colors[t % count];
     }
+
+    Color get(int t) const
+    {
+        return colors[t % count];
+    }
+
 };
 
 
-PaletteGenerator palette1(
+PaletteGenerator palette0(
     Color(0u, 38u, 66u),        // oxford blue
     Color(132u, 0u, 50u),       // burgandy
-    Color(229u, 149u, 0u),      // harvest gold
     Color(229u, 218u, 218u),     // gainsboro
+    Color(229u, 149u, 0u),      // harvest gold
     Color(2u, 4, 15, 1)          // rich black
 );
 
 // fruit salad (strawberry, orange)
-PaletteGenerator palette2(
+PaletteGenerator palette1(
     Color(0xfe0229),
-    Color(0xf06c00),
-    Color(0xffd000),
+    Color(0xc6df5f),
     Color(0xfff9d4),
-    Color(0xc6df5f)
+    Color(0xf06c00),
+    Color(0xffd000)
 );
 
-PaletteGenerator palette3(
-    Color(1u, 22, 39),          // maastrict blue
-    Color(253u, 255, 252),      // baby powder
+PaletteGenerator palette2(
     Color(46u, 196, 182),       // maximum blue green
     Color(231u, 29, 54),        // rose madder
-    Color(255u, 159u, 28)       // bright yellow (crayola)`
+    Color(255u, 159u, 28),       // bright yellow (crayola)`
+    Color(253u, 255, 252),      // baby powder
+    Color(1u, 22, 39)          // maastrict blue
 );
 
 PaletteGenerator greekpalette(
     Color(0x034488),
     Color(0x178fd6),
-    Color(0xccdde8),
+    Color(0xfffcf6),
     Color(0xedece8),
-    Color(0xfffcf6)
+    Color(0xccdde8)
 );
 
+/*
 PaletteGenerator raspberry(
     Color(0xfec6d2),
     Color(0xfa5d66),
     Color(0xa20106),
     Color(0x540e0b),
     Color(0x1d0205) 
+); */
+
+PaletteGenerator palette4(
+    Color(255u, 0, 34),
+    Color(65u, 234, 212),
+    Color(253u, 255, 252),
+    Color(185u, 19, 114),
+    Color(1u, 22, 39)
+);
+
+PaletteGenerator palette5(
+    Color(224u, 255, 79),
+    Color(255u, 102, 99),
+    Color(254u, 255, 254),
+    Color(11u, 57, 84),
+    Color(191u, 215, 234)
 );
 
 PaletteGenerator *palettes[] =
 {
-    &palette1, &palette2, &palette3, &greekpalette, &raspberry
+    &palette0, &palette1, &palette2, &greekpalette, &palette4,
+    &palette5
 };
 const int paletteCount = sizeof(palettes)/sizeof(void *);
 
@@ -714,6 +750,7 @@ const int paletteCount = sizeof(palettes)/sizeof(void *);
 class PointContext
 {
 public:
+    int pos;
     // per_point in
     float rad;  // distance from center
     // per_point in/out
@@ -726,7 +763,7 @@ public:
 class PatternContext
 {
 public:
-    PatternContext() : fade(1.0), fade_to(), cx(0.5), sx(1.0), dx(0.0), saturate(0), gamma(2.8),
+    PatternContext() : fade(1.0), blur(false), fade_to(), cx(0.5), sx(1.0), dx(0.0), saturate(0), gamma(2.0),
         ob_size(0), ib_size(0),
         time(0), frame(0)
     {
@@ -737,6 +774,7 @@ public:
     }
     Color fade_to;
     float fade;
+    bool blur;
     float cx;       // center
     float sx;       // stretch
     float dx;       // slide
@@ -977,6 +1015,19 @@ public:
             map[i] = to - (to - map[i]) * d;
         }
     }
+
+    void blur()
+    {
+        Image cp(*this);
+        for (int i=0 ; i<IMAGE_SIZE ; i++)
+        {
+            Color prev  = cp.getRGB(i-1<0?0:i-1);
+            Color color = cp.getRGB(i);
+            Color next  = cp.getRGB(i+1>IMAGE_SIZE-1?IMAGE_SIZE-1:i+1);
+            Color blur = prev*0.25 + color*0.5 + next*0.25;
+            setRGB(i,blur);
+        }
+    }
 };
 
 
@@ -1103,13 +1154,19 @@ void projectMSDL::renderFrame()
     float prev_time = timeKeeper->GetRunningTime();
     timeKeeper->UpdateTimers();
     beatDetect->detectFromSamples();
+    if (beatDetect->bass < 0 || beatDetect->mid < 0 || beatDetect->treb < 0)
+    {
+        //*(char *)NULL = '0';
+    }
     mybeat.update(timeKeeper->GetRunningTime(), 30, beatDetect);
 
     if (patterns.size() == 0)
         loadPatterns();
+
+    float beat_sensitivity = beatDetect->beat_sensitivity - timeKeeper->PresetProgressA();
     if (NULL == currentPattern ||
         timeKeeper->PresetProgressA() > 1.0 ||
-        ((beatDetect->vol-beatDetect->vol_old>beatDetect->beat_sensitivity ) && timeKeeper->CanHardCut()))
+        ((beatDetect->vol-beatDetect->vol_old>beat_sensitivity) && timeKeeper->CanHardCut()))
     {
         if (patterns.size() == 0)
             return;
@@ -1122,7 +1179,9 @@ void projectMSDL::renderFrame()
         pattern_index = pattern_index % patterns.size();
         currentPattern = patterns.at(pattern_index);
         currentPattern->setup(context);
-        fprintf(stderr, "%s\n", currentPattern->name().c_str());
+        fprintf(stdout, "%s\n", currentPattern->name().c_str());
+        if (device && device != stdout)
+            fprintf(device, "%s\n", currentPattern->name().c_str());
         timeKeeper->StartPreset();
     }
     Pattern *pattern = currentPattern;
@@ -1130,17 +1189,17 @@ void projectMSDL::renderFrame()
     //fprintf(stderr, "%lf %lf %lf\n", beatDetect->bass, beatDetect->mid, beatDetect->treb);
 
     PatternContext frame(context);
-    frame.time = timeKeeper->GetRunningTime();
+    frame.time  = timeKeeper->GetRunningTime();
     frame.dtime = frame.time - prev_time;
     frame.frame = timeKeeper->PresetProgressA();
-    frame.bass = beatDetect->bass;
-    frame.mid = beatDetect->mid;
-    frame.treb = beatDetect->treb;
-    frame.bass_att = beatDetect->bass_att;
-    frame.mid_att = beatDetect->mid_att;
-    frame.treb_att = beatDetect->treb_att;
+    frame.bass  = constrainf(beatDetect->bass, 0.0f, 100.0f);
+    frame.mid   = constrainf(beatDetect->mid, 0.0f, 100.0f);
+    frame.treb  = constrainf(beatDetect->treb, 0.0f, 100.0f);
+    frame.bass_att = constrainf(beatDetect->bass_att, 0.01f, 100.0f);
+    frame.mid_att  = constrainf(beatDetect->mid_att, 0.01f, 100.0f);
+    frame.treb_att = constrainf(beatDetect->treb_att, 0.01f, 100.0f);
     // frame.vol = beatDetect->vol;
-    frame.vol = (beatDetect->bass + beatDetect->mid + beatDetect->treb) / 3.0;
+    frame.vol      = constrainf((beatDetect->bass + beatDetect->mid + beatDetect->treb) / 3.0, 0.1, 100.0);
     //frame.vol_att = beatDetect->vol_attr; // (beatDetect->bass_att + beatDetect->mid_att + beatDetect->treb_att) / 3.0;
     frame.beat = mybeat.beat;
     frame.lastbeat = mybeat.lastbeat;
@@ -1150,6 +1209,7 @@ void projectMSDL::renderFrame()
     for (int i=0 ; i<IMAGE_SIZE ; i++)
     {
         PointContext &pt = frame.points[i];
+        pt.pos = i;
         pt.rad = ((double)i)/(IMAGE_SIZE-1) - 0.5;
         pt.sx = frame.sx;
         pt.cx = frame.cx;
@@ -1213,6 +1273,8 @@ public:
             else
                 image.setRGB(i, cp.getRGB(from));
         }
+        if (ctx.blur)
+            image.blur();
         image.fade(ctx.fade, ctx.fade_to);
     }
 
@@ -1249,7 +1311,7 @@ public:
     Waterfall() : AbstractPattern((const char *)"waterfall"),
         cx(0.05, 0.95, 6)
     {
-        option = random() % 2;
+        option = randomBool();
         lb_color = new ComboGenerator(
             new SimpleGenerator(0.2, 0.8, 1.5*5.5),
             new SimpleGenerator(0.2, 0.8, 1.5*6.5),
@@ -1281,13 +1343,13 @@ public:
 
     void per_frame(PatternContext &ctx)
     {
-        ctx.ob_left = palette->next( 7 * (int)ctx.time );
+        ctx.ob_left = palette->get( 7 * (int)ctx.time );
         ctx.ob_left *= 0.5 + ctx.treb / 2.0;
         ctx.ib_left = ctx.ob_left;
         ctx.ib_left.complement();
 
         //ctx.ob_right = rb_color->next( ctx.time );
-        ctx.ob_right = palette->next( 5 * (int)(ctx.time+2.0) );
+        ctx.ob_right = palette->get( 5 * (int)(ctx.time+2.0) );
         ctx.ob_right *= 0.5 + ctx.bass / 2.0;
         ctx.ib_right = ctx.ob_right;
         ctx.ib_right.complement();
@@ -1331,8 +1393,8 @@ public:
         ctx.fade = 0.99;
         if (!option_set)
         {
-            option1 = random() % 2;
-            option2 = random() % 2;
+            option1 = randomBool();
+            option2 = randomBool();
         }
         pattern_name = std::string("greenflash ") + (option1?"true":"false") + "/" + (option2?"true":"false");
     }
@@ -1379,7 +1441,7 @@ public:
         image.setRGB(IMAGE_SIZE/2-1-w,c);
         image.setRGB(IMAGE_SIZE/2+w,c);
 
-        if (wipe)
+        if (ctx.beat)
             for (int i=(IMAGE_SIZE/2-1-w)+1 ; i<=(IMAGE_SIZE/2+w)-1 ; i++)
                 image.setRGB(i, bg);
     }
@@ -1404,7 +1466,7 @@ class Fractal : public AbstractPattern
 public:
     Fractal() : AbstractPattern("fractal"), x()
     {
-        option = random() % 2;
+        option = randomBool();
         color = new ComboGenerator(
             new SimpleGenerator(0.2, 0.8, 0.5*5.5),
             new SimpleGenerator(0.2, 0.8, 0.5*6.5),
@@ -1427,7 +1489,7 @@ public:
         if (!option_set)
             option = !option;
         ptime = ctime = ctx.time;
-        ctx.fade = 0.6;
+        ctx.fade = 0.7;
         ctx.sx = 0.5;
         pattern_name = std::string("fractal ") + (option?"true":"false");
     }
@@ -1505,7 +1567,7 @@ class Fractal2 : public AbstractPattern
 public:
     Fractal2() : AbstractPattern("fractal"), x()
     {
-        option = random() % 2;
+        option = randomBool();
         color = new ComboGenerator(
             new SimpleGenerator(0.2, 0.8, 5.5),
             new SimpleGenerator(0.2, 0.8, 6.5),
@@ -1551,25 +1613,22 @@ public:
         float vol_att = (ctx.bass_att+ctx.mid_att+ctx.treb_att) / 3.0;
         if (option)
         {
-            //stretch = 2.0 + ((ctx.bass>ctx.bass_att*1.5) ? ctx.bass/2.0 : 0);
             stretch = 2.0;
             if (ctx.time < ctx.lastbeat + 0.2)
                 stretch = 1.5 + 0.5*MIN(1.0,ctx.bass/ctx.bass_att);
-            // ctx.sx = 1.0/stretch;
             ctx.cx = 0.5;
-            ctx.fade = 0.9;
+            ctx.fade = 0.85;
         }
         else
         {
             stretch = 2.0;
-            ctx.fade = constrain(0.7 + 0.4 * vol_att);
-            c = c * constrain(0.7 + 0.4 * ctx.bass);
-            // ctx.sx = 1.0/2.0;
             ctx.cx = 0.0;
+            ctx.fade = constrain(0.6 + 0.4 * ctx.bass / (ctx.bass_att+0.25));
+            c = c * constrain(0.7 + 0.3 * ctx.bass);
         }
 
         c.constrain2();
-        ctx.ib_left = ctx.ib_right = c;
+        ctx.ob_left = ctx.ob_right = c;
     }
 
     void per_point(PatternContext &ctx, PointContext &pt)
@@ -1598,9 +1657,14 @@ public:
             return;
         }
         float posx = x.next(ptime);
-        image.setRGB((int)floor(posx), ctx.ob_left);
-        image.setRGB((int)ceil(posx), ctx.ob_left);
-        image.addRGB(posx, ctx.ib_left);
+        int pos = (int)round(posx);
+        // image.setRGB(constrain(pos-1,0,IMAGE_SIZE-1), BLACK);
+        // image.setRGB(constrain(pos+1,0,IMAGE_SIZE-1), BLACK);
+        image.setRGB(constrain(pos,0,IMAGE_SIZE-1), ctx.ob_left);
+
+        // image.setRGB((int)floor(posx), BLACK);
+        // image.setRGB((int)ceil(posx), BLACK);
+        // image.addRGB(posx, ctx.ob_left);
     }
 
     void effects(PatternContext &ctx, Image &image)
@@ -1623,7 +1687,7 @@ public:
 
     Diffusion() : AbstractPattern("diffusion"), option_set(0)
     {
-        option = random() % 2;
+        option = randomBool();
         color = new ComboGenerator(
             new SimpleGenerator(0.1, 0.7, 2*M_PI/1.517),
             new SimpleGenerator(0.1, 0.7, 2*M_PI/1.088),
@@ -1702,7 +1766,7 @@ public:
 
     Diffusion2() : AbstractPattern("diffusion"), option_set(0)
     {
-        option = random() % 2;
+        option = randomBool();
         color = new ComboGenerator(
             new SimpleGenerator(0.1, 0.7, 2*M_PI/1.517),
             new SimpleGenerator(0.1, 0.7, 2*M_PI/1.088),
@@ -1778,7 +1842,7 @@ public:
 
     Equalizer() : AbstractPattern("equalizer")
     {
-        option = random() % 2;
+        option = randomBool();
     }
 
     Equalizer(bool opt) : AbstractPattern("equalizer")
@@ -1789,6 +1853,9 @@ public:
 
     void setup(PatternContext &ctx)
     {
+        int palette_index = -1;
+
+        ctx.blur = true;
         ctx.fade = 0.85;
         ctx.sx = 0.90;
 
@@ -1799,18 +1866,24 @@ public:
         {
             c1 = Color(1.0f, 0.0f, 0.0f); // red
             c2 = Color(0.0f, 1.0f, 0.0f); // green
-            cmix = Color(c1, c2, 0.5f);
+            cmix = Color(1.0, 1.0, 0.0, 0.5);
             //cmix = WHITE;
         }
         else
         {
-            PaletteGenerator *p = palettes[randomInt(paletteCount)];
-            // c1 = Color(0.0f, 0.0f, 1.0f);    // blue
+            int index = randomInt(paletteCount);
+            fprintf(stderr, "palette %d\n", index);
+            PaletteGenerator *p = palettes[index];
+            // c1 = Color(0.0f, 0.0f, 1.0f);    /Color/ blue
             // c2 = Color(1.0f, 1.0f, 0.0f);    // yellow
             // cmix = Color(0.0f, 1.0f, 0.0f);  // green
-            c1 = p->next(0);
-            c2 = p->next(1);
-            cmix = p->next(2);
+            c1 = p->get(0);
+            c1.saturate(1.0);
+            c2 = p->get(1);
+            c2.saturate(1.0);
+            cmix = p->get(2);
+            cmix.saturate(1.0);
+            cmix.rgba.a = 0.5;
         }
         pattern_name = std::string("equalizer ") + (option?"true":"false");
     }
@@ -1829,34 +1902,34 @@ public:
 
     void per_point(PatternContext &ctx, PointContext &pt)
     {
-        float i = (pt.rad+0.5) * (IMAGE_SIZE-1);
-        if (i < posB && i < posT)
-            pt.cx = 0;
-        else if (i > posB && i > posT)
-            pt.cx = 1;
+        if (posB <= posT)
+            pt.sx = 1.1;
         else 
-            pt.cx = (posT + posB) / (2.0*IMAGE_SCALE);
+            pt.sx = 0.9;
+        // if (pt.pos <= posB && posB <= posT)
+        // {
+        //     pt.cx = 0.0;
+        // }
+        // else if (pt.pos >= posT && posT >= posB)
+        // {
+        //     pt.cx = 1.0;
+        // }
+        // else if (posB > posT)
+        // {
+        //     pt.sx = 
+        // }
     }
 
-    void update(PatternContext &ctx, Image &image)
+
+    // void update(PatternContext &ctx, Image &image)
+    // {
+    //     image.blur();
+    //     image.fade(ctx.fade, ctx.fade_to);
+    // }
+
+
+    void draw2(PatternContext &ctx, Image &image)
     {
-        Image cp(image);
-        for (int i=0 ; i<IMAGE_SIZE ; i++)
-        {
-            Color prev = image.getRGB(i-1<0?0:i-1);
-            Color color = image.getRGB(i);
-            Color next = image.getRGB(i+1>IMAGE_SIZE-1?IMAGE_SIZE-1:i+1);
-            Color blur = prev*0.25 + color*0.5 + next*0.25;
-            image.setRGB(i,blur);
-        }
-        image.fade(ctx.fade, ctx.fade_to);
-    }
-
-
-    void draw(PatternContext &ctx, Image &image)
-    {
-        Color white(0.5f,0.5f,0.5f);
-
         Image draw;
         // for (int i=0 ; i<posB ; i++)
         //     draw.addRGB(i, green * 0.1);
@@ -1871,6 +1944,15 @@ public:
 
         for (int i=0 ; i<IMAGE_SIZE ; i++)
             image.addRGB(i, draw.getRGB(i));
+    }
+  
+    void draw(PatternContext &ctx, Image &image)
+    {
+        image.setRGB(posB, c1);
+        image.setRGB(posT, c2);
+
+        for (int i=posT+1 ; i<posB ; i++)
+            image.addRGB(i, cmix);
     }
 };
 
@@ -1888,7 +1970,7 @@ public:
 
     EKG() : AbstractPattern("EKG"), colorLast(), option_set(0), vol_att(0)
     {
-        option = random() % 2;
+        option = randomBool();
     }
 
     EKG(bool _option) :  EKG()
@@ -1995,7 +2077,7 @@ public:
         palette = palettes[p];
         if (!option_set)
             option = !option;
-        ctx.fade = 0.975;
+        ctx.fade = 0.94;
         ctx.sx = 1.0;
         ctx.dx_wrap = false;
         ctx.ob_size = 1;
@@ -2019,16 +2101,21 @@ public:
             //ctx.fade = 1.0;
         }
 
-        Color c(1.0f,1.0f,1.0f);
-        if (!option)
+        Color c;
+        if (option)
+        {
+            c = WHITE;
+            float v = MAX(vol_att, ctx.vol);
+            float s = MIN(1.0, 0.55 + 0.3 * v);
+            c.saturate(s);
+        }
         {
 //          c = color->next((float)ctx.time);
-            c = palette->next((int)beatCount);
+            c = palette->get((int)beatCount);
+            float v = MAX(vol_att, ctx.vol);
+            float s = MIN(1.0, 0.55 + 0.3 * v);
+            c.saturate(s);
         }
-        float v = MAX(vol_att, ctx.vol);
-        float s = MIN(1.0, 0.6 + 0.3 * v);
-        //c.saturate(MIN(1.0,0.4 + v/2.0));
-        c.saturate(s);
         ctx.ob_right = c;
     }
 
@@ -2046,7 +2133,7 @@ public:
         if (!option)
         {
 //             c = color->next((float)ctx.time);
-            c = palette->next((int)beatCount);
+            c = palette->get((int)beatCount);
         }
         float v = MAX(vol_att, ctx.vol);
         c.saturate(MIN(1.0,0.4 + v/2.0));
@@ -2075,6 +2162,7 @@ class Pebbles : public AbstractPattern
     Generator *g;
     PaletteGenerator *palette;
     int beatCount = 0;
+    unsigned palette_color = 0;
     
 // per_frame_1=wave_r = 0.5 + 0.5*sin(1.6*time);
 // per_frame_2=wave_g = 0.5 + 0.5*sin(4.1*time);
@@ -2086,7 +2174,7 @@ public:
         r(new SimpleGenerator(0.0,1.0,1.6/3)),
         g(new SimpleGenerator(0.0,1.0,4.1/3))
     {
-        option = random() % 2;
+        option = randomBool();
     }
 
     Pebbles(bool opt) : Pebbles()
@@ -2097,10 +2185,11 @@ public:
 
     void setup(PatternContext &ctx)
     {
-        palette = palettes[random() % paletteCount];
+        palette = palettes[randomInt(paletteCount)];
         if (!option_set)
             option = !option;
-        ctx.fade = 0.96;
+        ctx.fade = 0.97;
+        ctx.blur = !option;
         ctx.fade_to = option ? Color() : Color(1.0f,1.0f,1.0f);
         ctx.dx_wrap = true;
         pattern_name = std::string("pebbles ") + (option?"true":"false");
@@ -2108,12 +2197,13 @@ public:
 
     void per_frame(PatternContext &ctx)
     {
-        beatCount += (ctx.beat ? 1 : 0);
         vol_mean = IN(vol_mean, ctx.vol, 0.05);
         vol_mean = constrain(vol_mean, 0.1f, 10000.0f);
         if (ctx.beat)
         {
-            last_cx = random() / (float)RAND_MAX;
+            beatCount++;
+            palette_color = randomInt(RAND_MAX);
+            last_cx = randomFloat();
         }
         ctx.cx = last_cx;
     }
@@ -2151,7 +2241,7 @@ public:
             }
             else
             {
-                c = palette->next(beatCount);
+                c = palette->get( palette_color );
                 //c = Color(0.1f, 0.1f, 0.1f);
             }
 
@@ -2171,7 +2261,7 @@ class BigWhiteLight : public AbstractPattern
     bool option;
 public:
 
-    BigWhiteLight() : AbstractPattern("drum")
+    BigWhiteLight() : AbstractPattern("big white")
     {
     }
 
@@ -2180,6 +2270,7 @@ public:
         option = !option;
         ctx.cx = 0.5;
         ctx.sx = 0.8;
+        ctx.blur = true;
         ctx.fade = 0.9;
         ctx.ob_size = 1;
         ctx.ib_size = 0;
@@ -2191,8 +2282,18 @@ public:
     {
         vol_att = IN(vol_att, ctx.vol, 0.3);
         float v = vol_att / 2;
+        // float t = constrain(ctx.treb*0.8 - ctx.bass);
+        // float b = constrain(ctx.bass - ctx.treb*0.8);
+        // t = constrain(t / ctx.vol - 1.5);
+        // b = constrain(b / ctx.vol - 1.5);
+        float vol = (ctx.bass*2 + ctx.mid + ctx.treb*2) / 5.0;
+        float t = constrain( ctx.treb / ctx.vol - 2.1);
+        float b = constrain( ctx.bass / ctx.vol - 2.1);
+        Color c = Color(1.0f-b, 1.0f-t-b, 1.0f-t);
+        c.constrain();
         float s = MIN(1.0, 0.3 + v);
-        Color c = WHITE * s;
+        if (!ctx.beat)
+            c = c * s;
         ctx.ib_size = ctx.beat;
         ctx.ob_left = ctx.ob_right = ctx.ib_left = ctx.ib_right = c;
     }
@@ -2205,26 +2306,215 @@ public:
 };
 
 
+class BigWhiteLight2 : public AbstractPattern
+{
+    float start_time = 0.0;
+    float prev_time = 0.0;
+    float vol_att = 1.0;
+    float vol_level = 1.0;
+    bool dir = 0;
+    bool option=0;
+public:
+
+    BigWhiteLight2() : AbstractPattern("big white2")
+    {
+    }
+
+    void setup(PatternContext &ctx)
+    {
+        option = !option;
+        start_time = ctx.time;
+        ctx.dx = 0.0;
+        ctx.cx = 0.5;
+        ctx.sx = 1.0;
+        ctx.blur = true;
+        ctx.fade = 0.9;
+        ctx.ob_size = 1;
+        ctx.ib_size = 0;
+        ctx.ob_left = ctx.ob_right = WHITE;
+        ctx.ib_left = ctx.ib_right = WHITE;
+    }
+
+    void per_frame(PatternContext &ctx)
+    {
+        // if ((int)((prev_time-start_time)/20.0) != (int)((ctx.time-start_time)/20.0))
+        //     dir = !dir;
+        //prev_time = ctx.time;
+        vol_att = IN(vol_att, ctx.vol, 0.3);
+        vol_level = IN(vol_level, ctx.vol, 0.05);
+
+        if (ctx.time - prev_time > 15.0 &&ctx.beat)
+        {
+            dir = !dir;
+            prev_time = ctx.time;
+        }
+
+        float v = vol_att / 2;
+        // float t = constrain(ctx.treb*0.8 - ctx.bass);
+        // float b = constrain(ctx.bass - ctx.treb*0.8);
+        // t = constrain(t / ctx.vol - 1.5);
+        // b = constrain(b / ctx.vol - 1.5);
+        float vol = (ctx.bass*2 + ctx.mid + ctx.treb*2) / 5.0;
+        float t = constrain( ctx.treb / ctx.vol - 2.1);
+        float b = constrain( ctx.bass / ctx.vol - 2.1);
+        Color c = Color(1.0f-b, 1.0f-t-b, 1.0f-t);
+        c.constrain();
+        float s = MIN(1.0, 0.3 + v);
+        if (!ctx.beat)
+            c = c * s;
+        ctx.ib_size = ctx.beat;
+        ctx.ob_left = ctx.ob_right = ctx.ib_left = ctx.ib_right = c;
+    }
+
+    void per_point(PatternContext &ctx, PointContext &pt)
+    {
+        pt.cx = option ? 0.5 : pt.rad < 0.0 ? 1.0 : 0.0;
+        float v = cos(M_PI*pt.rad);  // 0->1->0
+        //pt.sx = 0.9 + v - vol_att/10.0;
+        pt.sx = 1.04 - v*0.2 - ((vol_att/vol_level)-1)*0.1;
+    }
+
+    void effects(PatternContext &ctx, Image &image)
+    {
+        if (dir)
+            image.rotate(0.5);
+    }
+};
+
+
+
+class SwayBeat : public AbstractPattern
+{
+    PaletteGenerator *palette;
+    unsigned beatCount=0;
+    bool dir = 0;
+    bool option=0;
+    Color left=WHITE, right=WHITE;
+    float mytime=0;
+
+    Color colors[3] = {Color(0.0f,0,0,0), Color(0.0f,0,0,0), WHITE};
+    int positions[3] = {0, IMAGE_SIZE-1, IMAGE_SIZE/2};
+
+public:
+
+    SwayBeat() : AbstractPattern("sway beat")
+    {
+    }
+
+    void setup(PatternContext &ctx)
+    {
+        palette = palettes[randomInt(paletteCount)];
+        option = !option;
+        ctx.dx = 0.0;
+        ctx.cx = 0.5;
+        ctx.sx = 1.0;
+        ctx.blur = true;
+        ctx.fade = 0.88;
+        ctx.ob_size = 0;
+        ctx.ib_size = 0;
+    }
+
+    void per_frame(PatternContext &ctx)
+    {
+        mytime += ctx.dtime;
+        colors[0].rgba.a *= 0.95;
+        colors[1].rgba.a *= 0.95;
+        //colors[2].rgba.a *= 0.95;
+
+        if (ctx.beat)
+        {
+            beatCount++;
+            if (randomBool() && colors[0].rgba.a < 0.3)
+            {
+                Color c;
+                do {
+                    unsigned p = randomInt(RAND_MAX);
+                    c =palette->get(p);
+                } while (c.rgba.r + c.rgba.g + c.rgba.b < 1.0);
+                colors[0] = colors[1];
+                positions[0] = positions[1];
+                colors[1] = colors[2];
+                positions[1] = positions[2];
+                colors[2] = c;
+                do {
+                    positions[2] = randomInt(IMAGE_SIZE);
+                } while (positions[2]==positions[1] || positions[2] == positions[0]);
+                // if (randomBool()) // (beatCount % 2)
+                //     left = c;
+                // else
+                //     right = c;
+            }
+        }
+        //float t = (beatCount%8) + (ctx.time-ctx.lastbeat)/ctx.interval;
+        //float s = 2*M_PI*t/8.0;
+        ctx.dx = sin(ctx.time*0.6) * 0.05;
+        //ctx.dx *= 1.0 + constrain((ctx.treb/ctx.treb_att)-1.0) * 0.2;        
+    }
+
+/*
+    void update(PatternContext ctx, Image &image)
+    {
+        Image cp(image);
+        for (int i=0 ; i<IMAGE_SIZE ; i++)
+            image.setRGB(i,image.getRGB(IMAGE_SIZE-1-i));
+        AbstractPattern::update(ctx,image);
+    }
+*/
+
+    void per_point(PatternContext &ctx, PointContext &pt)
+    {
+        float t = (ctx.time-ctx.lastbeat)/ctx.interval;
+        float s = 2*M_PI*t;
+        pt.dx += sin(s + 3*pt.rad) * 0.02;
+
+        // change dx to sx
+        // float dx = pt.dx;
+        // pt.dx = 0;
+        // pt.sx = (1.0 + dx*(pt.rad<0?-1.0:1.0));
+    }
+
+    void draw(PatternContext &ctx, Image &image)
+    {
+        //image.setRGB((0)+5, left);
+        //image.setRGB((IMAGE_SIZE-1)-5, right);
+        image.addRGB(positions[0], colors[0]);
+        image.addRGB(positions[1], colors[1]);
+        image.addRGB(positions[2], colors[2]);
+    }
+
+
+    void effects(PatternContext &ctx, Image &image)
+    {
+    }
+};
+
+
+
+
 void loadAllPatterns()
 {
     patterns.push_back(new Waterfall());
     patterns.push_back(new GreenFlash());
-    patterns.push_back(new Fractal2());
+    patterns.push_back(new Fractal2(true));
+    patterns.push_back(new Fractal(false));
     patterns.push_back(new Diffusion2());
     patterns.push_back(new Equalizer());
     patterns.push_back(new EKG2());
     patterns.push_back(new Pebbles());
+    patterns.push_back(new BigWhiteLight2());
+    patterns.push_back(new SwayBeat());
 }
 
 void loadPatterns()
 {
     loadAllPatterns();
-    //patterns.push_back(new BigWhiteLight());
+    //patterns.push_back(new SwayBeat());
+    //patterns.push_back(new BigWhiteLight2());
     //patterns.push_back(new Fractal2());
     //patterns.push_back(new Pebbles());
     //patterns.push_back(new Waterfall(false));
-    // patterns.push_back(new Pebbles(true));
+    //patterns.push_back(new Pebbles(true));
     //patterns.push_back(new GreenFlash());
     //patterns.push_back(new EKG2());
-    //patterns.push_back(new Equalizer());
+    //patterns.push_back(new Equalizer(true));
 }
