@@ -70,7 +70,7 @@ SDL_AudioDeviceID projectMSDL::selectAudioInput(int count) {
     }
     if (selected != -1)
         return selected;
-    return 0;
+    return 1;
 
     while (count > 1)
     {
@@ -795,10 +795,11 @@ public:
     unsigned frame;
 
     float vol;
+    float vol_level;
     float bass;
     float mid;
     float treb;
-    //float vol_att;
+    float vol_att;
     float bass_att;
     float mid_att;
     float treb_att;
@@ -1148,6 +1149,7 @@ public:
 
 MyBeat007 mybeat;
 int pattern_index = 0;
+float vol_level = 1.0;
 
 void projectMSDL::renderFrame()
 {
@@ -1179,8 +1181,8 @@ void projectMSDL::renderFrame()
         pattern_index = pattern_index % patterns.size();
         currentPattern = patterns.at(pattern_index);
         currentPattern->setup(context);
-        fprintf(stdout, "%s\n", currentPattern->name().c_str());
-        if (device && device != stdout)
+        fprintf(stderr, "%s\n", currentPattern->name().c_str());
+        if (device)
             fprintf(device, "%s\n", currentPattern->name().c_str());
         timeKeeper->StartPreset();
     }
@@ -1200,7 +1202,9 @@ void projectMSDL::renderFrame()
     frame.treb_att = constrainf(beatDetect->treb_att, 0.01f, 100.0f);
     // frame.vol = beatDetect->vol;
     frame.vol      = constrainf((beatDetect->bass + beatDetect->mid + beatDetect->treb) / 3.0, 0.1, 100.0);
-    //frame.vol_att = beatDetect->vol_attr; // (beatDetect->bass_att + beatDetect->mid_att + beatDetect->treb_att) / 3.0;
+    frame.vol_att   = (frame.bass_att+frame.mid_att+frame.treb_att)/3.0;
+    vol_level = IN(vol_level, MAX(0.2,frame.vol), 0.02);
+    frame.vol_level = vol_level;
     frame.beat = mybeat.beat;
     frame.lastbeat = mybeat.lastbeat;
     frame.interval = mybeat.interval;
@@ -1374,7 +1378,6 @@ public:
 class GreenFlash : public AbstractPattern
 {
     bool option1, option2, wipe, option_set;
-    float vol_att = 1.0;
 public:
     GreenFlash() : AbstractPattern((const char *)"green flash")
     {}
@@ -1401,7 +1404,6 @@ public:
 
     void per_frame(PatternContext &ctx)
     {
-        vol_att = IN(vol_att,ctx.vol,0.2);
         if (ctx.beat)
             wipe = !wipe; 
     }
@@ -1428,7 +1430,7 @@ public:
         else
         {
             // c = Color(1.0f, 1.0-t, 1.0-m); // red
-            float v = MAX(ctx.vol,vol_att);
+            float v = MAX(ctx.vol,ctx.vol_att);
             c = Color(1.0f, 1.0-v/2, 1.0-v/2); // red
             bg = Color(1.0f, 1.0f, 1.0f);
         }
@@ -1610,7 +1612,6 @@ public:
         Color c = color->next(ctime);
         c.saturate(1.0);
 
-        float vol_att = (ctx.bass_att+ctx.mid_att+ctx.treb_att) / 3.0;
         if (option)
         {
             stretch = 2.0;
@@ -1890,14 +1891,19 @@ public:
 
     void per_frame(PatternContext &ctx)
     {
-        posB = MAX(ctx.bass,ctx.bass_att) * (IMAGE_SCALE/2);
+        float bass = 1.0 * MAX(ctx.bass,ctx.bass_att);
+        posB = bass/ctx.vol_level * (IMAGE_SCALE/2);
         posB = constrain(posB, 0, IMAGE_SIZE-1);
 
-        posT = MAX(ctx.treb,ctx.treb_att) * (IMAGE_SCALE/2);
+	float treb = 1.0 * MAX(ctx.treb,ctx.treb_att);
+        posT = treb/ctx.vol_level * (IMAGE_SCALE/2);
         posT = constrain(posT, 0, IMAGE_SIZE-1);
         posT = IMAGE_SIZE-1 - posT;
 
         ctx.cx = ((posB + posT) / 2.0) / (IMAGE_SIZE-1);
+
+        fprintf(stderr, "[%f %f %f]\n", bass, treb, ctx.vol_level);
+        //fprintf(stderr, "(%f %f)\n", posT, posB);
     }
 
     void per_point(PatternContext &ctx, PointContext &pt)
@@ -1964,11 +1970,10 @@ class EKG : public AbstractPattern
     float speed;
     bool option;
     bool option_set;
-    float vol_att;
 
 public:
 
-    EKG() : AbstractPattern("EKG"), colorLast(), option_set(0), vol_att(0)
+    EKG() : AbstractPattern("EKG"), colorLast(), option_set(0)
     {
         option = randomBool();
     }
@@ -1995,11 +2000,9 @@ public:
     {
         if (option)
             // ctx.dx = 0.1*(ctx.treb-0.5);
-            ctx.dx = 0.1 * (ctx.vol - vol_att);
+            ctx.dx = 0.1 * (ctx.vol - ctx.vol_att);
         else
             ctx.dx = 0.08 * (ctx.treb - ctx.bass);
-
-        vol_att = IN(vol_att, ctx.vol, 0.2);
     }
 
     void per_point(PatternContext &ctx, PointContext &pt)
@@ -2049,13 +2052,12 @@ class EKG2 : public AbstractPattern
     float pos;
     bool option;
     bool option_set;
-    float vol_att;
     PaletteGenerator *palette;
     int beatCount = 0;
 
 public:
 
-    EKG2() : AbstractPattern("EKG2"), colorLast(), option_set(0), vol_att(0)
+    EKG2() : AbstractPattern("EKG2"), colorLast(), option_set(0)
     {
         option = randomBool();
         //  color = new ComboGenerator(
@@ -2089,7 +2091,6 @@ public:
 
     void per_frame(PatternContext &ctx)
     {
-        vol_att = IN(vol_att, ctx.vol, 0.2);
         beatCount += (ctx.beat ? 1 : 0);
         pos += 0.002 * (1.0 + ctx.treb);
 
@@ -2105,14 +2106,14 @@ public:
         if (option)
         {
             c = WHITE;
-            float v = MAX(vol_att, ctx.vol);
+            float v = MAX(ctx.vol_att, ctx.vol);
             float s = MIN(1.0, 0.55 + 0.3 * v);
             c.saturate(s);
         }
         {
 //          c = color->next((float)ctx.time);
             c = palette->get((int)beatCount);
-            float v = MAX(vol_att, ctx.vol);
+            float v = MAX(ctx.vol_att, ctx.vol);
             float s = MIN(1.0, 0.55 + 0.3 * v);
             c.saturate(s);
         }
@@ -2135,7 +2136,7 @@ public:
 //             c = color->next((float)ctx.time);
             c = palette->get((int)beatCount);
         }
-        float v = MAX(vol_att, ctx.vol);
+        float v = MAX(ctx.vol_att, ctx.vol);
         c.saturate(MIN(1.0,0.4 + v/2.0));
 
         int p = ((int)round(pos)) % IMAGE_SIZE;
@@ -2257,7 +2258,6 @@ public:
 
 class BigWhiteLight : public AbstractPattern
 {
-    float vol_att = 1.0;
     bool option;
 public:
 
@@ -2280,8 +2280,7 @@ public:
 
     void per_frame(PatternContext &ctx)
     {
-        vol_att = IN(vol_att, ctx.vol, 0.3);
-        float v = vol_att / 2;
+        float v = ctx.vol_att / 2;
         // float t = constrain(ctx.treb*0.8 - ctx.bass);
         // float b = constrain(ctx.bass - ctx.treb*0.8);
         // t = constrain(t / ctx.vol - 1.5);
@@ -2310,8 +2309,6 @@ class BigWhiteLight2 : public AbstractPattern
 {
     float start_time = 0.0;
     float prev_time = 0.0;
-    float vol_att = 1.0;
-    float vol_level = 1.0;
     bool dir = 0;
     bool option=0;
 public:
@@ -2340,8 +2337,6 @@ public:
         // if ((int)((prev_time-start_time)/20.0) != (int)((ctx.time-start_time)/20.0))
         //     dir = !dir;
         //prev_time = ctx.time;
-        vol_att = IN(vol_att, ctx.vol, 0.3);
-        vol_level = IN(vol_level, ctx.vol, 0.05);
 
         if (ctx.time - prev_time > 15.0 &&ctx.beat)
         {
@@ -2349,7 +2344,7 @@ public:
             prev_time = ctx.time;
         }
 
-        float v = vol_att / 2;
+        float v = ctx.vol_att / 2;
         // float t = constrain(ctx.treb*0.8 - ctx.bass);
         // float b = constrain(ctx.bass - ctx.treb*0.8);
         // t = constrain(t / ctx.vol - 1.5);
@@ -2370,8 +2365,8 @@ public:
     {
         pt.cx = option ? 0.5 : pt.rad < 0.0 ? 1.0 : 0.0;
         float v = cos(M_PI*pt.rad);  // 0->1->0
-        //pt.sx = 0.9 + v - vol_att/10.0;
-        pt.sx = 1.04 - v*0.2 - ((vol_att/vol_level)-1)*0.1;
+        //pt.sx = 0.9 + v - ctx.vol_att/10.0;
+        pt.sx = 1.04 - v*0.2 - ((ctx.vol_att/ctx.vol_level)-1)*0.1;
     }
 
     void effects(PatternContext &ctx, Image &image)
@@ -2507,7 +2502,7 @@ void loadAllPatterns()
 
 void loadPatterns()
 {
-    loadAllPatterns();
+    //loadAllPatterns();
     //patterns.push_back(new SwayBeat());
     //patterns.push_back(new BigWhiteLight2());
     //patterns.push_back(new Fractal2());
@@ -2516,5 +2511,5 @@ void loadPatterns()
     //patterns.push_back(new Pebbles(true));
     //patterns.push_back(new GreenFlash());
     //patterns.push_back(new EKG2());
-    //patterns.push_back(new Equalizer(true));
+    patterns.push_back(new Equalizer(true));
 }
